@@ -57,6 +57,7 @@ memory:
   episodic_top_k: 5                # Number of similar past messages to retrieve
   summary_threshold: 50            # Summarize after this many messages
   embedding_dimensions: 3072       # Must match the embedding model output (gemini-embedding-002)
+  max_context_tokens: 8000         # Max tokens in assembled context prompt
 
 # Bot settings
 bot:

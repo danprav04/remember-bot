@@ -1,9 +1,9 @@
 """
 Orchestrator — the main message processing pipeline.
 
-Phase 2: Uses all three memory tiers (working, episodic, semantic)
-to build context. Runs fact extraction and embedding as async
-background tasks after the response is sent.
+Uses all three memory tiers (working, episodic, semantic) to build context.
+Runs fact extraction, embedding, and summarization as async background
+tasks after the response is sent.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from src.db.repositories.users import UserRepository
 from src.gateway.base import IncomingMessage
 from src.llm.router import LLMRouter
 from src.memory.episodic import EpisodicMemory
+from src.memory.summarizer import ConversationSummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +39,14 @@ class Orchestrator:
         context_assembler: ContextAssembler,
         fact_extractor: FactExtractor,
         episodic_memory: EpisodicMemory,
+        summarizer: ConversationSummarizer,
     ):
         self.config = config
         self.llm_router = llm_router
         self.context_assembler = context_assembler
         self.fact_extractor = fact_extractor
         self.episodic_memory = episodic_memory
+        self.summarizer = summarizer
         self._session_factory = get_session_factory()
 
     async def handle_message(self, incoming: IncomingMessage) -> str:
@@ -54,7 +57,7 @@ class Orchestrator:
         3. Assemble context (all memory tiers)
         4. Call LLM
         5. Store response
-        6. Kick off background tasks (embedding + fact extraction)
+        6. Kick off background tasks (embedding + fact extraction + summarization)
         7. Return response text
         """
         async with self._session_factory() as session:
@@ -125,10 +128,10 @@ class Orchestrator:
                 await session.commit()
 
                 # 6. Background tasks — fire and forget
-                # These run in separate sessions so they don't block the response.
                 asyncio.create_task(
                     self._background_memory_tasks(
                         user_id=user.id,
+                        conversation_id=conversation.id,
                         user_message_id=user_msg.id,
                         bot_message_id=bot_msg.id,
                         user_text=incoming.text,
@@ -146,36 +149,34 @@ class Orchestrator:
     async def _background_memory_tasks(
         self,
         user_id: int,
+        conversation_id: int,
         user_message_id: int,
         bot_message_id: int,
         user_text: str,
         bot_text: str,
     ) -> None:
         """
-        Run embedding and fact extraction as background tasks.
-        Uses a separate DB session so the main response path isn't affected.
+        Run embedding, fact extraction, and summarization as background tasks.
+        Uses separate DB sessions so the main response path isn't affected.
         """
         try:
+            # 1. Embed messages
             async with self._session_factory() as session:
-                # Embed the user message
                 await self.episodic_memory.embed_message(
                     session=session,
                     message_id=user_message_id,
                     user_id=user_id,
                     text=user_text,
                 )
-
-                # Embed the bot response
                 await self.episodic_memory.embed_message(
                     session=session,
                     message_id=bot_message_id,
                     user_id=user_id,
                     text=bot_text,
                 )
-
                 await session.commit()
 
-            # Fact extraction in a separate session
+            # 2. Fact extraction
             async with self._session_factory() as session:
                 await self.fact_extractor.extract_and_store(
                     session=session,
@@ -184,6 +185,16 @@ class Orchestrator:
                     assistant_response=bot_text,
                     source_message_id=user_message_id,
                 )
+
+            # 3. Conversation summarization (if threshold exceeded)
+            async with self._session_factory() as session:
+                summarized = await self.summarizer.maybe_summarize(
+                    session=session,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                if summarized:
+                    await session.commit()
 
         except Exception:
             logger.exception(

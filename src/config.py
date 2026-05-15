@@ -129,7 +129,8 @@ class MemoryConfig:
         self.working_memory_size: int = mem.get("working_memory_size", 20)
         self.episodic_top_k: int = mem.get("episodic_top_k", 5)
         self.summary_threshold: int = mem.get("summary_threshold", 50)
-        self.embedding_dimensions: int = mem.get("embedding_dimensions", 768)
+        self.embedding_dimensions: int = mem.get("embedding_dimensions", 3072)
+        self.max_context_tokens: int = mem.get("max_context_tokens", 8000)
 
 
 class BotConfig:

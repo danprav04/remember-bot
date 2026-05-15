@@ -22,6 +22,7 @@ from src.llm.embeddings import EmbeddingService
 from src.llm.router import LLMRouter
 from src.memory.episodic import EpisodicMemory
 from src.memory.semantic import SemanticMemory
+from src.memory.summarizer import ConversationSummarizer
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -76,6 +77,13 @@ async def lifespan(app: FastAPI):
     # Initialize Fact Extractor
     fact_extractor = FactExtractor(llm_router)
 
+    # Initialize Conversation Summarizer
+    summarizer = ConversationSummarizer(
+        config=config,
+        llm_router=llm_router,
+        embedding_service=embedding_service,
+    )
+
     # Initialize Orchestrator
     orchestrator = Orchestrator(
         config=config,
@@ -83,6 +91,7 @@ async def lifespan(app: FastAPI):
         context_assembler=context_assembler,
         fact_extractor=fact_extractor,
         episodic_memory=episodic_memory,
+        summarizer=summarizer,
     )
 
     # Initialize Telegram gateway
@@ -118,7 +127,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Remember Bot",
     description="A memory-first chatbot with infinite context retention.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 

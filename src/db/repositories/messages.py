@@ -84,3 +84,44 @@ class MessageRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one()
+
+    async def get_messages_range(
+        self,
+        conversation_id: int,
+        after_id: int | None = None,
+        limit: int = 50,
+    ) -> list[Message]:
+        """
+        Get messages in a conversation, optionally starting after a given message ID.
+        Returns oldest-first, used by the summarizer to grab un-summarized chunks.
+        """
+        stmt = select(Message).where(
+            Message.conversation_id == conversation_id
+        )
+        if after_id is not None:
+            stmt = stmt.where(Message.id > after_id)
+        stmt = stmt.order_by(Message.created_at.asc()).limit(limit)
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_oldest_unsummarized_messages(
+        self,
+        conversation_id: int,
+        last_summarized_message_id: int | None,
+        limit: int = 50,
+    ) -> list[Message]:
+        """
+        Get messages that haven't been summarized yet, oldest first.
+        Used to determine if summarization threshold has been reached.
+        """
+        stmt = select(Message).where(
+            Message.conversation_id == conversation_id
+        )
+        if last_summarized_message_id is not None:
+            stmt = stmt.where(Message.id > last_summarized_message_id)
+        stmt = stmt.order_by(Message.created_at.asc()).limit(limit)
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
