@@ -1,7 +1,7 @@
 """
 Remember Bot — FastAPI application entry point.
 
-Wires up the gateway, orchestrator, LLM router, and database.
+Wires up the gateway, orchestrator, LLM router, memory subsystems, and database.
 """
 
 from __future__ import annotations
@@ -12,11 +12,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.config import get_config
+from src.core.context_assembler import ContextAssembler
+from src.core.fact_extractor import FactExtractor
 from src.core.orchestrator import Orchestrator
 from src.db.engine import get_engine
 from src.db.models import Base
 from src.gateway.telegram import TelegramGateway
+from src.llm.embeddings import EmbeddingService
 from src.llm.router import LLMRouter
+from src.memory.episodic import EpisodicMemory
+from src.memory.semantic import SemanticMemory
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -54,8 +59,31 @@ async def lifespan(app: FastAPI):
     # Initialize LLM Router
     llm_router = LLMRouter(config)
 
+    # Initialize Embedding Service
+    embedding_service = EmbeddingService(config)
+
+    # Initialize Memory Subsystems
+    episodic_memory = EpisodicMemory(embedding_service)
+    semantic_memory = SemanticMemory()
+
+    # Initialize Context Assembler
+    context_assembler = ContextAssembler(
+        config=config,
+        episodic_memory=episodic_memory,
+        semantic_memory=semantic_memory,
+    )
+
+    # Initialize Fact Extractor
+    fact_extractor = FactExtractor(llm_router)
+
     # Initialize Orchestrator
-    orchestrator = Orchestrator(config, llm_router)
+    orchestrator = Orchestrator(
+        config=config,
+        llm_router=llm_router,
+        context_assembler=context_assembler,
+        fact_extractor=fact_extractor,
+        episodic_memory=episodic_memory,
+    )
 
     # Initialize Telegram gateway
     if config.settings.telegram_bot_token:
@@ -90,7 +118,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Remember Bot",
     description="A memory-first chatbot with infinite context retention.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 

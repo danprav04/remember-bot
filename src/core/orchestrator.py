@@ -1,21 +1,26 @@
 """
 Orchestrator — the main message processing pipeline.
 
-Phase 1: Uses working memory (last N messages) to build context.
-Phase 2 will add episodic (vector) and semantic (facts) memory retrieval.
+Phase 2: Uses all three memory tiers (working, episodic, semantic)
+to build context. Runs fact extraction and embedding as async
+background tasks after the response is sent.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from src.config import AppConfig
+from src.core.context_assembler import ContextAssembler
+from src.core.fact_extractor import FactExtractor
 from src.db.engine import get_session_factory
 from src.db.repositories.messages import MessageRepository
 from src.db.repositories.users import UserRepository
 from src.gateway.base import IncomingMessage
 from src.llm.router import LLMRouter
+from src.memory.episodic import EpisodicMemory
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +31,19 @@ class Orchestrator:
     queries the LLM, stores everything, and returns the response.
     """
 
-    def __init__(self, config: AppConfig, llm_router: LLMRouter):
+    def __init__(
+        self,
+        config: AppConfig,
+        llm_router: LLMRouter,
+        context_assembler: ContextAssembler,
+        fact_extractor: FactExtractor,
+        episodic_memory: EpisodicMemory,
+    ):
         self.config = config
         self.llm_router = llm_router
+        self.context_assembler = context_assembler
+        self.fact_extractor = fact_extractor
+        self.episodic_memory = episodic_memory
         self._session_factory = get_session_factory()
 
     async def handle_message(self, incoming: IncomingMessage) -> str:
@@ -36,10 +51,11 @@ class Orchestrator:
         Full message processing pipeline:
         1. Resolve user & conversation
         2. Store incoming message
-        3. Assemble context (working memory for Phase 1)
+        3. Assemble context (all memory tiers)
         4. Call LLM
         5. Store response
-        6. Return response text
+        6. Kick off background tasks (embedding + fact extraction)
+        7. Return response text
         """
         async with self._session_factory() as session:
             try:
@@ -60,7 +76,7 @@ class Orchestrator:
                 )
 
                 # 2. Store the incoming message
-                await msg_repo.save_message(
+                user_msg = await msg_repo.save_message(
                     conversation_id=conversation.id,
                     user_id=user.id,
                     role="user",
@@ -68,10 +84,12 @@ class Orchestrator:
                 )
                 await session.commit()
 
-                # 3. Assemble context — Phase 1: working memory only
-                context_messages = await self._assemble_context(
-                    msg_repo=msg_repo,
+                # 3. Assemble context — all memory tiers
+                context_messages = await self.context_assembler.assemble(
+                    session=session,
+                    user_id=user.id,
                     conversation_id=conversation.id,
+                    current_message_text=incoming.text,
                     user_display_name=incoming.display_name,
                 )
 
@@ -91,7 +109,7 @@ class Orchestrator:
                 )
 
                 # 5. Store the bot response
-                await msg_repo.save_message(
+                bot_msg = await msg_repo.save_message(
                     conversation_id=conversation.id,
                     user_id=user.id,
                     role="assistant",
@@ -106,6 +124,18 @@ class Orchestrator:
                 )
                 await session.commit()
 
+                # 6. Background tasks — fire and forget
+                # These run in separate sessions so they don't block the response.
+                asyncio.create_task(
+                    self._background_memory_tasks(
+                        user_id=user.id,
+                        user_message_id=user_msg.id,
+                        bot_message_id=bot_msg.id,
+                        user_text=incoming.text,
+                        bot_text=llm_response.content,
+                    )
+                )
+
                 return llm_response.content
 
             except Exception:
@@ -113,39 +143,49 @@ class Orchestrator:
                 logger.exception("Error in orchestrator pipeline")
                 raise
 
-    async def _assemble_context(
+    async def _background_memory_tasks(
         self,
-        msg_repo: MessageRepository,
-        conversation_id: int,
-        user_display_name: str | None = None,
-    ) -> list[dict[str, str]]:
+        user_id: int,
+        user_message_id: int,
+        bot_message_id: int,
+        user_text: str,
+        bot_text: str,
+    ) -> None:
         """
-        Build the messages list for the LLM.
-
-        Phase 1: System prompt + last N messages (working memory).
-        Phase 2 will add episodic and semantic memory retrieval here.
+        Run embedding and fact extraction as background tasks.
+        Uses a separate DB session so the main response path isn't affected.
         """
-        # System prompt
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        system_prompt = self.config.bot.system_prompt.replace("{current_time}", now)
+        try:
+            async with self._session_factory() as session:
+                # Embed the user message
+                await self.episodic_memory.embed_message(
+                    session=session,
+                    message_id=user_message_id,
+                    user_id=user_id,
+                    text=user_text,
+                )
 
-        if user_display_name:
-            system_prompt += f"\n\nThe user's name is: {user_display_name}"
+                # Embed the bot response
+                await self.episodic_memory.embed_message(
+                    session=session,
+                    message_id=bot_message_id,
+                    user_id=user_id,
+                    text=bot_text,
+                )
 
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_prompt}
-        ]
+                await session.commit()
 
-        # Working memory: recent messages
-        recent = await msg_repo.get_recent_messages(
-            conversation_id=conversation_id,
-            limit=self.config.memory.working_memory_size,
-        )
+            # Fact extraction in a separate session
+            async with self._session_factory() as session:
+                await self.fact_extractor.extract_and_store(
+                    session=session,
+                    user_id=user_id,
+                    user_message=user_text,
+                    assistant_response=bot_text,
+                    source_message_id=user_message_id,
+                )
 
-        for msg in recent:
-            messages.append({
-                "role": msg.role,
-                "content": msg.content,
-            })
-
-        return messages
+        except Exception:
+            logger.exception(
+                "Background memory tasks failed for user %d", user_id
+            )

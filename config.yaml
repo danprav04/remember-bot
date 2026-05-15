@@ -23,6 +23,8 @@ llm:
       fallback:
         - provider: "aistudio"
           model: "gemini-3-flash-preview"
+        - provider: "aistudio"
+          model: "gemma-4-31b-it"
 
     fact_extraction:
       provider: "aistudio"
@@ -30,6 +32,8 @@ llm:
       fallback:
         - provider: "aistudio"
           model: "gemini-3-flash-preview"
+        - provider: "aistudio"
+          model: "gemma-4-31b-it"
 
     summarization:
       provider: "aistudio"
@@ -37,10 +41,12 @@ llm:
       fallback:
         - provider: "aistudio"
           model: "gemini-3-flash-preview"
+        - provider: "aistudio"
+          model: "gemma-4-31b-it"
 
     embeddings:
       provider: "aistudio"
-      model: "gemini-embedding-002"
+      model: "gemini-embedding-2"
       # No fallback — embeddings must use the same model for vector consistency
 
   fallback_enabled: true
@@ -50,7 +56,7 @@ memory:
   working_memory_size: 20          # Number of recent messages to include
   episodic_top_k: 5                # Number of similar past messages to retrieve
   summary_threshold: 50            # Summarize after this many messages
-  embedding_dimensions: 768        # Must match the embedding model output
+  embedding_dimensions: 3072       # Must match the embedding model output (gemini-embedding-002)
 
 # Bot settings
 bot:

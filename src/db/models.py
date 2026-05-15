@@ -94,7 +94,7 @@ class MessageEmbedding(Base):
     message_id = Column(BigInteger, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     chunk_text = Column(Text, nullable=False)
-    embedding = Column(Vector(768), nullable=False)
+    embedding = Column(Vector(3072), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -102,8 +102,9 @@ class MessageEmbedding(Base):
 
     __table_args__ = (
         Index("idx_embeddings_user", "user_id"),
-        Index("idx_embeddings_hnsw", "embedding", postgresql_using="hnsw",
-              postgresql_ops={"embedding": "vector_cosine_ops"}),
+        # Note: HNSW index limited to 2000 dims, gemini-embedding-002 outputs 3072.
+        # Exact search via <=> operator is fine at this scale. Add IVFFlat index
+        # later when data grows (requires training on existing rows).
     )
 
 
@@ -140,7 +141,7 @@ class ConversationSummary(Base):
     summary_text = Column(Text, nullable=False)
     message_range_start = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
     message_range_end = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
-    embedding = Column(Vector(768), nullable=True)
+    embedding = Column(Vector(3072), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
