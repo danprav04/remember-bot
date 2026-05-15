@@ -71,6 +71,25 @@ class Orchestrator:
         6. Kick off background tasks (embedding + fact extraction + summarization)
         7. Return response text
         """
+        # --- Pre-processing: Transcribe Voice Messages ---
+        if incoming.media_type == "voice" and incoming.media_base64:
+            try:
+                logger.info("Transcribing voice message for user %s...", incoming.platform_user_id)
+                transcript_response = await self.llm_router.chat_with_media(
+                    task="vision",
+                    text="Please transcribe this voice message exactly word-for-word. Output ONLY the transcription and nothing else.",
+                    media_base64=incoming.media_base64,
+                    media_mime=incoming.media_mime,
+                    system_prompt="You are a highly accurate audio transcription engine. Do not answer questions, just transcribe the audio. Do not include markdown or quotation marks.",
+                    temperature=0.0,
+                )
+                transcription = transcript_response.content.strip()
+                if transcription:
+                    incoming.text = transcription
+                    logger.info("Transcription result: %s", incoming.text)
+            except Exception as e:
+                logger.warning("Voice transcription failed, falling back to default text. Error: %s", e)
+
         async with self._session_factory() as session:
             try:
                 # 1. Resolve user and conversation
@@ -89,7 +108,7 @@ class Orchestrator:
                     platform_chat_id=incoming.platform_chat_id,
                 )
 
-                # 2. Store the incoming message
+                # 2. Store the incoming message (now contains transcription if voice)
                 user_msg = await msg_repo.save_message(
                     conversation_id=conversation.id,
                     user_id=user.id,

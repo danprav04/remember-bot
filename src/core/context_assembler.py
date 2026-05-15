@@ -172,6 +172,14 @@ class ContextAssembler:
             len(episodic_chunks),
             len(working_messages),
         )
+        
+        # Verbose logging of the exact data pulled
+        if facts:
+            logger.info("Semantic facts used:\n%s", "\n".join(f"  - {f}" for f in facts))
+        if episodic_chunks:
+            logger.info("Episodic chunks recalled:\n%s", "\n".join(f"  - {c}" for c in episodic_chunks))
+        if working_messages:
+            logger.info("Working memory included %d messages (oldest first).", len(working_messages))
 
         return messages
 
