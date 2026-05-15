@@ -38,6 +38,8 @@ class TelegramGateway(BaseGateway):
         self.webhook_base_url = webhook_base_url
         self.webhook_path = "/webhook/telegram"
         self.webhook_url = f"{webhook_base_url}{self.webhook_path}"
+        if not self.webhook_url.startswith("http"):
+            self.webhook_url = f"https://{self.webhook_url}"
 
         self._orchestrator: Orchestrator | None = None
         self._command_handler: BotCommandHandler | None = None
