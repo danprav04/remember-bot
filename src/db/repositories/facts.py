@@ -25,12 +25,14 @@ class FactRepository:
         tags: list[str] | None = None,
         relevance_score: float = 1.0,
         source_message_id: int | None = None,
+        embedding: list[float] | None = None,
     ) -> Fact:
         """Store a new fact for a user."""
         fact = Fact(
             user_id=user_id,
             content=content,
             tags=tags or [],
+            embedding=embedding,
             relevance_score=relevance_score,
             source_message_id=source_message_id,
             is_active=True,
@@ -47,6 +49,7 @@ class FactRepository:
         tags: list[str] | None = None,
         relevance_score: float = 1.0,
         source_message_id: int | None = None,
+        embedding: list[float] | None = None,
     ) -> Fact:
         """
         Mark an existing fact as superseded and create the replacement.
@@ -64,6 +67,7 @@ class FactRepository:
             tags=tags,
             relevance_score=relevance_score,
             source_message_id=source_message_id,
+            embedding=embedding,
         )
 
         # Link old → new
@@ -84,6 +88,25 @@ class FactRepository:
             select(Fact)
             .where(Fact.user_id == user_id, Fact.is_active == True)
             .order_by(Fact.relevance_score.desc(), Fact.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def search_facts_by_similarity(
+        self,
+        user_id: int,
+        query_embedding: list[float],
+        limit: int = 20,
+    ) -> list[Fact]:
+        """
+        Find active facts that are semantically similar to the query.
+        Uses cosine distance (<=> operator in pgvector).
+        """
+        stmt = (
+            select(Fact)
+            .where(Fact.user_id == user_id, Fact.is_active == True, Fact.embedding.is_not(None))
+            .order_by(Fact.embedding.cosine_distance(query_embedding))
             .limit(limit)
         )
         result = await self.session.execute(stmt)

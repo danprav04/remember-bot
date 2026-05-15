@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Memory Subsystems
     episodic_memory = EpisodicMemory(embedding_service)
-    semantic_memory = SemanticMemory()
+    semantic_memory = SemanticMemory(embedding_service=embedding_service)
 
     # Initialize Context Assembler
     context_assembler = ContextAssembler(
@@ -76,7 +76,10 @@ async def lifespan(app: FastAPI):
     )
 
     # Initialize Fact Extractor
-    fact_extractor = FactExtractor(llm_router)
+    fact_extractor = FactExtractor(
+        llm_router=llm_router,
+        embedding_service=embedding_service,
+    )
 
     # Initialize Conversation Summarizer
     summarizer = ConversationSummarizer(

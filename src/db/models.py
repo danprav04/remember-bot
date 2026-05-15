@@ -115,6 +115,7 @@ class Fact(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     content = Column(Text, nullable=False)                    # Natural language fact
     tags = Column(ARRAY(Text), default=list)                  # Free-form tags
+    embedding = Column(Vector(3072), nullable=True)           # Semantic embedding for vector search
     relevance_score = Column(Float, default=1.0)
     source_message_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
     superseded_by = Column(Integer, ForeignKey("facts.id"), nullable=True)
