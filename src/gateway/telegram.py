@@ -271,10 +271,15 @@ class TelegramGateway(BaseGateway):
 
             # Download voice file
             file_bytes = await self._download_file_base64(voice.file_id)
-            media_b64 = base64.b64encode(file_bytes).decode("utf-8")
 
-            # Determine MIME type
-            mime_type = voice.mime_type or "audio/ogg"
+            # Convert OGG to WAV for Gemini API using pydub
+            from pydub import AudioSegment
+            audio_segment = AudioSegment.from_file(BytesIO(file_bytes))
+            wav_io = BytesIO()
+            audio_segment.export(wav_io, format="wav")
+            wav_bytes = wav_io.getvalue()
+
+            media_b64 = base64.b64encode(wav_bytes).decode("utf-8")
 
             incoming = IncomingMessage(
                 platform="telegram",
@@ -284,7 +289,7 @@ class TelegramGateway(BaseGateway):
                 text="[Voice message]",
                 media_type="voice",
                 media_base64=media_b64,
-                media_mime=mime_type,
+                media_mime="audio/wav",
             )
 
             response_text = await self._orchestrator.handle_message(incoming)

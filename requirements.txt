@@ -24,3 +24,6 @@ tiktoken==0.9.0
 
 # HTTP client
 httpx==0.28.1
+
+# Audio conversion
+pydub==0.25.1
