@@ -70,6 +70,7 @@ class TelegramGateway(BaseGateway):
         self._application.add_handler(CommandHandler("forget", self._handle_forget))
         self._application.add_handler(CommandHandler("model", self._handle_model))
         self._application.add_handler(CommandHandler("stats", self._handle_stats))
+        self._application.add_handler(CommandHandler("export", self._handle_export))
 
         # Media message handlers
         self._application.add_handler(
@@ -282,6 +283,88 @@ class TelegramGateway(BaseGateway):
             platform_user_id=str(user.id),
         )
         await update.message.reply_text(text, parse_mode="HTML")
+
+    async def _handle_export(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /export command to download a ZIP of user data."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+
+        user = update.message.from_user
+
+        # Send typing/uploading document action
+        await update.message.chat.send_action("upload_document")
+
+        data = await self._command_handler.handle_export(
+            platform="telegram",
+            platform_user_id=str(user.id),
+        )
+
+        if isinstance(data, str):
+            await update.message.reply_text(data, parse_mode="HTML")
+            return
+
+        # Generate files and zip in memory
+        import json
+        import zipfile
+        from datetime import datetime
+
+        # 1. JSON Export
+        json_str = json.dumps(data, indent=2, default=str)
+
+        # 2. Markdown Export
+        md_lines = [
+            f"# Memory Bot Export for {data['user']['display_name'] or 'User'}",
+            f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "## 🧠 Your Facts (Semantic Memory)",
+            "Facts are pieces of information the bot extracted and actively uses.",
+            ""
+        ]
+
+        for f in data.get("facts", []):
+            status = "🟢 Active" if f["is_active"] else "🔴 Forgotten"
+            md_lines.append(f"- **[{f['id']}]** {f['content']} ({status})")
+
+        md_lines.extend(["", "## 💬 Chat History", ""])
+
+        for c in data.get("conversations", []):
+            md_lines.append(f"### Conversation on {c['created_at']}")
+            for m in c.get("messages", []):
+                role = "👤 You" if m["role"] == "user" else "🤖 Bot"
+                # Strip newlines for single-line display or indent for block display
+                content_indented = m['content'].replace('\n', '\n  ')
+                md_lines.append(f"**{role}**: {content_indented}")
+            md_lines.append("")
+
+        md_lines.extend([
+            "## 🔗 Episodic Memory Embeddings",
+            "To give the bot long-term memory, your messages are converted into mathematical vectors (embeddings) and stored in a database. When you talk to the bot, it searches this vector database for similar past messages to give it 'episodic recall'.",
+            "To save space, the raw mathematical vectors have been omitted from this export. Below are the actual text chunks that were embedded and saved:",
+            ""
+        ])
+
+        for e in data.get("embeddings_history", []):
+            md_lines.append(f"- *[{e['created_at']}]*: {e['chunk_text']}")
+
+        md_str = "\n".join(md_lines)
+
+        # 3. Zip file
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("data.json", json_str)
+            zf.writestr("readable_export.md", md_str)
+
+        zip_buffer.seek(0)
+        zip_buffer.name = f"remember_bot_export_{datetime.now().strftime('%Y%m%d')}.zip"
+
+        await update.message.reply_document(
+            document=zip_buffer,
+            caption="📦 <b>Export complete!</b> Here is your data in both JSON and readable text formats.",
+            parse_mode="HTML"
+        )
 
     # ------------------------------------------------------------------
     # Telegram handlers — Media Messages

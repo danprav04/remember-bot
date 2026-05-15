@@ -50,6 +50,7 @@ class CommandHandler:
             "⚙️ <b>Info</b>\n"
             "/model — Show current AI model configuration\n"
             "/stats — Show your memory statistics\n"
+            "/export — Download a ZIP of all your data\n"
             "/help — Show this help message\n"
             "\n"
             "💡 Chat naturally, send voice messages 🎤, or photos 📷\n"
@@ -220,6 +221,91 @@ class CommandHandler:
                 f"  🎯 Episodic recall: top {self.config.memory.episodic_top_k} similar\n"
                 f"  📦 Context budget: {self.config.memory.max_context_tokens} tokens"
             )
+
+    async def handle_export(self, platform: str, platform_user_id: str) -> dict | str:
+        """Export all user data as a dictionary. Returns error string if user not found."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from src.db.models import User, Fact, Conversation, MessageEmbedding
+
+        async with self._session_factory() as session:
+            # Load user
+            stmt = select(User).where(
+                User.platform == platform,
+                User.platform_user_id == platform_user_id,
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                return "No data found to export."
+
+            # Fetch facts
+            facts_stmt = select(Fact).where(Fact.user_id == user.id).order_by(Fact.created_at)
+            facts_result = await session.execute(facts_stmt)
+            facts = facts_result.scalars().all()
+
+            # Fetch conversations and messages
+            convs_stmt = select(Conversation).where(Conversation.user_id == user.id).options(
+                selectinload(Conversation.messages)
+            ).order_by(Conversation.created_at)
+            convs_result = await session.execute(convs_stmt)
+            conversations = convs_result.scalars().all()
+
+            # Fetch embeddings
+            embs_stmt = select(MessageEmbedding).where(MessageEmbedding.user_id == user.id).order_by(MessageEmbedding.created_at)
+            embs_result = await session.execute(embs_stmt)
+            embeddings = embs_result.scalars().all()
+
+            # Build dict
+            data = {
+                "user": {
+                    "id": user.id,
+                    "platform": user.platform,
+                    "platform_user_id": user.platform_user_id,
+                    "display_name": user.display_name,
+                    "created_at": user.created_at.isoformat() if user.created_at else None,
+                },
+                "facts": [
+                    {
+                        "id": f.id,
+                        "content": f.content,
+                        "tags": f.tags,
+                        "relevance_score": f.relevance_score,
+                        "is_active": f.is_active,
+                        "created_at": f.created_at.isoformat() if f.created_at else None,
+                        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+                    }
+                    for f in facts
+                ],
+                "conversations": [
+                    {
+                        "id": c.id,
+                        "created_at": c.created_at.isoformat() if c.created_at else None,
+                        "messages": [
+                            {
+                                "id": m.id,
+                                "role": m.role,
+                                "content": m.content,
+                                "created_at": m.created_at.isoformat() if m.created_at else None,
+                            }
+                            for m in c.messages
+                        ]
+                    }
+                    for c in conversations
+                ],
+                "embeddings_history": [
+                    {
+                        "id": e.id,
+                        "chunk_text": e.chunk_text,
+                        "message_id": e.message_id,
+                        "created_at": e.created_at.isoformat() if e.created_at else None,
+                    }
+                    for e in embeddings
+                ]
+            }
+
+            return data
 
     async def _resolve_user(
         self, session: AsyncSession, platform: str, platform_user_id: str
