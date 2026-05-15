@@ -51,14 +51,10 @@ llm:
 
     vision:
       provider: "aistudio"
-      model: "gemini-2.5-flash-preview-05-20"
+      model: "gemini-3.1-flash-lite"
       fallback:
         - provider: "aistudio"
-          model: "gemini-2.0-flash"
-        - provider: "aistudio"
           model: "gemini-3-flash-preview"
-        - provider: "aistudio"
-          model: "gemini-3.1-flash-lite"
         - provider: "aistudio"
           model: "gemma-4-31b-it"
 
