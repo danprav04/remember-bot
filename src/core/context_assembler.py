@@ -75,10 +75,11 @@ class ContextAssembler:
             top_k=self.config.memory.episodic_top_k,
         )
 
-        # Semantic memory: stored facts
+        # Semantic memory: stored facts (dynamically searched via vector if query provided)
         facts = await self.semantic.recall(
             session=session,
             user_id=user_id,
+            query_text=current_message_text,
             limit=20,
         )
 

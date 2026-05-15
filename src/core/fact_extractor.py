@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.repositories.facts import FactRepository
 from src.llm.router import LLMRouter
+from src.llm.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,9 @@ class ExtractedFact:
 class FactExtractor:
     """Extracts facts from conversation turns using the LLM."""
 
-    def __init__(self, llm_router: LLMRouter):
+    def __init__(self, llm_router: LLMRouter, embedding_service: EmbeddingService):
         self.llm_router = llm_router
+        self.embedding_service = embedding_service
 
     async def extract_and_store(
         self,
@@ -123,6 +125,14 @@ class FactExtractor:
             stored = []
             for fact in extracted:
                 try:
+                    # Generate embedding for the fact content
+                    try:
+                        embedding = await self.embedding_service.embed(fact.content)
+                        fact_embedding = embedding if embedding else None
+                    except Exception as e:
+                        logger.warning("Failed to embed fact '%s': %s", fact.content, e)
+                        fact_embedding = None
+
                     if fact.supersedes_fact_id is not None:
                         # Verify the old fact actually belongs to this user
                         old = await fact_repo.get_fact_by_id(fact.supersedes_fact_id, user_id)
@@ -134,6 +144,7 @@ class FactExtractor:
                                 tags=fact.tags,
                                 relevance_score=fact.relevance_score,
                                 source_message_id=source_message_id,
+                                embedding=fact_embedding,
                             )
                         else:
                             # Old fact not found — just create new
@@ -143,6 +154,7 @@ class FactExtractor:
                                 tags=fact.tags,
                                 relevance_score=fact.relevance_score,
                                 source_message_id=source_message_id,
+                                embedding=fact_embedding,
                             )
                     else:
                         await fact_repo.create_fact(
@@ -151,6 +163,7 @@ class FactExtractor:
                             tags=fact.tags,
                             relevance_score=fact.relevance_score,
                             source_message_id=source_message_id,
+                            embedding=fact_embedding,
                         )
                     stored.append(fact)
                 except Exception:
