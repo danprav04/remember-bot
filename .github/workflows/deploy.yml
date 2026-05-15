@@ -120,19 +120,15 @@ jobs:
             echo "${GHCR_PULL_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
 
             # Create production override for docker-compose to use the GHCR image instead of building locally
-            cat << 'INNER_EOF' > docker-compose.override.yml
-            services:
-              app:
-                build: !reset null
-                image: ${FULL_IMAGE_URI}
-            INNER_EOF
+            echo "services:" > docker-compose.override.yml
+            echo "  app:" >> docker-compose.override.yml
+            echo "    build: !reset null" >> docker-compose.override.yml
+            echo "    image: ${FULL_IMAGE_URI}" >> docker-compose.override.yml
 
             # Create the .env file with secrets
-            cat << INNER_EOF > .env
-            AISTUDIO_API_KEY=${AISTUDIO_API_KEY}
-            TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-            WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}
-            INNER_EOF
+            echo "AISTUDIO_API_KEY=${AISTUDIO_API_KEY}" > .env
+            echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
+            echo "WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}" >> .env
 
             # Create the systemd service file for Docker Compose
             echo "[Unit]" | sudo tee "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
