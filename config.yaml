@@ -21,28 +21,26 @@ llm:
       provider: "aistudio"
       model: "gemini-3.1-flash-lite"
       fallback:
-        - provider: "openrouter"
-          model: "google/gemini-2.0-flash-001"
-        - provider: "aihubmix"
-          model: "gpt-4o-mini"
+        - provider: "aistudio"
+          model: "gemini-3-flash-preview"
 
     fact_extraction:
       provider: "aistudio"
       model: "gemini-3.1-flash-lite"
       fallback:
-        - provider: "openrouter"
-          model: "google/gemini-2.0-flash-001"
+        - provider: "aistudio"
+          model: "gemini-3-flash-preview"
 
     summarization:
       provider: "aistudio"
       model: "gemini-3.1-flash-lite"
       fallback:
-        - provider: "aihubmix"
-          model: "gpt-4o-mini"
+        - provider: "aistudio"
+          model: "gemini-3-flash-preview"
 
     embeddings:
       provider: "aistudio"
-      model: "gemini-embedding-exp-03-07"
+      model: "gemini-embedding-002"
       # No fallback — embeddings must use the same model for vector consistency
 
   fallback_enabled: true
