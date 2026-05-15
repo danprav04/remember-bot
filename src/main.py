@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from src.config import get_config
 from src.core.context_assembler import ContextAssembler
+from src.core.commands import CommandHandler as BotCommandHandler
 from src.core.fact_extractor import FactExtractor
 from src.core.orchestrator import Orchestrator
 from src.db.engine import get_engine
@@ -101,6 +102,15 @@ async def lifespan(app: FastAPI):
             webhook_base_url=config.settings.webhook_base_url,
         )
         telegram_gateway.set_orchestrator(orchestrator)
+
+        # Initialize and inject command handler
+        command_handler = BotCommandHandler(
+            config=config,
+            llm_router=llm_router,
+            episodic_memory=episodic_memory,
+        )
+        telegram_gateway.set_command_handler(command_handler)
+
         await telegram_gateway.setup(app)
         await telegram_gateway.start()
         logger.info("Telegram gateway started")
@@ -127,7 +137,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Remember Bot",
     description="A memory-first chatbot with infinite context retention.",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 

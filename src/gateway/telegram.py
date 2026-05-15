@@ -21,6 +21,7 @@ from telegram.ext import (
 from src.gateway.base import BaseGateway, IncomingMessage
 
 if TYPE_CHECKING:
+    from src.core.commands import CommandHandler as BotCommandHandler
     from src.core.orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
@@ -36,11 +37,16 @@ class TelegramGateway(BaseGateway):
         self.webhook_url = f"{webhook_base_url}{self.webhook_path}"
 
         self._orchestrator: Orchestrator | None = None
+        self._command_handler: BotCommandHandler | None = None
         self._application: Application | None = None
 
     def set_orchestrator(self, orchestrator: Orchestrator) -> None:
         """Inject the orchestrator dependency (avoids circular imports)."""
         self._orchestrator = orchestrator
+
+    def set_command_handler(self, handler: BotCommandHandler) -> None:
+        """Inject the command handler dependency."""
+        self._command_handler = handler
 
     async def setup(self, app) -> None:
         """Register the webhook endpoint with FastAPI."""
@@ -53,8 +59,16 @@ class TelegramGateway(BaseGateway):
             .build()
         )
 
-        # Register handlers
+        # Register command handlers
         self._application.add_handler(CommandHandler("start", self._handle_start))
+        self._application.add_handler(CommandHandler("help", self._handle_help))
+        self._application.add_handler(CommandHandler("facts", self._handle_facts))
+        self._application.add_handler(CommandHandler("search", self._handle_search))
+        self._application.add_handler(CommandHandler("forget", self._handle_forget))
+        self._application.add_handler(CommandHandler("model", self._handle_model))
+        self._application.add_handler(CommandHandler("stats", self._handle_stats))
+
+        # Text message handler (must be last — catches everything else)
         self._application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -105,11 +119,13 @@ class TelegramGateway(BaseGateway):
         for i in range(0, len(text), max_len):
             chunk = text[i : i + max_len]
             await self._application.bot.send_message(
-                chat_id=int(chat_id), text=chunk
+                chat_id=int(chat_id),
+                text=chunk,
+                parse_mode="Markdown",
             )
 
     # ------------------------------------------------------------------
-    # Telegram handlers
+    # Telegram handlers — Commands
     # ------------------------------------------------------------------
 
     async def _handle_start(
@@ -118,8 +134,93 @@ class TelegramGateway(BaseGateway):
         """Handle the /start command."""
         await update.message.reply_text(
             "👋 Hi! I'm your memory bot. Tell me anything and I'll remember it.\n\n"
-            "Just chat naturally — I'll remember everything you tell me."
+            "Just chat naturally — I'll remember everything you tell me.\n\n"
+            "Type /help to see all available commands.",
         )
+
+    async def _handle_help(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /help command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        text = await self._command_handler.handle_help()
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def _handle_facts(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /facts command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        text = await self._command_handler.handle_facts(
+            platform="telegram",
+            platform_user_id=str(user.id),
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def _handle_search(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /search <query> command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        query = " ".join(context.args) if context.args else ""
+        text = await self._command_handler.handle_search(
+            platform="telegram",
+            platform_user_id=str(user.id),
+            query=query,
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def _handle_forget(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /forget <id|all> command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        arg = " ".join(context.args) if context.args else ""
+        text = await self._command_handler.handle_forget(
+            platform="telegram",
+            platform_user_id=str(user.id),
+            arg=arg,
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def _handle_model(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /model command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        text = await self._command_handler.handle_model()
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def _handle_stats(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /stats command."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        text = await self._command_handler.handle_stats(
+            platform="telegram",
+            platform_user_id=str(user.id),
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    # ------------------------------------------------------------------
+    # Telegram handlers — Messages
+    # ------------------------------------------------------------------
 
     async def _handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

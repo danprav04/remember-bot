@@ -122,3 +122,46 @@ class FactRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one()
+
+    async def deactivate_fact(self, fact_id: int, user_id: int) -> bool:
+        """Deactivate (soft-delete) a fact. Returns True if found and deactivated."""
+        fact = await self.get_fact_by_id(fact_id, user_id)
+        if fact and fact.is_active:
+            fact.is_active = False
+            fact.updated_at = datetime.now(timezone.utc)
+            await self.session.flush()
+            return True
+        return False
+
+    async def deactivate_all_facts(self, user_id: int) -> int:
+        """Deactivate all active facts for a user. Returns count deactivated."""
+        facts = await self.get_active_facts(user_id=user_id, limit=1000)
+        count = 0
+        for fact in facts:
+            fact.is_active = False
+            fact.updated_at = datetime.now(timezone.utc)
+            count += 1
+        if count:
+            await self.session.flush()
+        return count
+
+    async def search_facts_by_text(
+        self,
+        user_id: int,
+        query: str,
+        limit: int = 10,
+    ) -> list[Fact]:
+        """Search active facts by content text (case-insensitive ILIKE)."""
+        stmt = (
+            select(Fact)
+            .where(
+                Fact.user_id == user_id,
+                Fact.is_active == True,
+                Fact.content.ilike(f"%{query}%"),
+            )
+            .order_by(Fact.relevance_score.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
