@@ -1,0 +1,66 @@
+# Remember Bot — Provider & Model Configuration
+# Each task can use a different provider + model.
+# Fallback chains are tried in order if the primary fails.
+
+llm:
+  providers:
+    aistudio:
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key_env: "AISTUDIO_API_KEY"
+
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: "OPENROUTER_API_KEY"
+
+    aihubmix:
+      base_url: "https://api.aihubmix.com/v1"
+      api_key_env: "AIHUBMIX_API_KEY"
+
+  tasks:
+    chat:
+      provider: "aistudio"
+      model: "gemini-3.1-flash-lite"
+      fallback:
+        - provider: "openrouter"
+          model: "google/gemini-2.0-flash-001"
+        - provider: "aihubmix"
+          model: "gpt-4o-mini"
+
+    fact_extraction:
+      provider: "aistudio"
+      model: "gemini-3.1-flash-lite"
+      fallback:
+        - provider: "openrouter"
+          model: "google/gemini-2.0-flash-001"
+
+    summarization:
+      provider: "aistudio"
+      model: "gemini-3.1-flash-lite"
+      fallback:
+        - provider: "aihubmix"
+          model: "gpt-4o-mini"
+
+    embeddings:
+      provider: "aistudio"
+      model: "gemini-embedding-exp-03-07"
+      # No fallback — embeddings must use the same model for vector consistency
+
+  fallback_enabled: true
+
+# Memory settings
+memory:
+  working_memory_size: 20          # Number of recent messages to include
+  episodic_top_k: 5                # Number of similar past messages to retrieve
+  summary_threshold: 50            # Summarize after this many messages
+  embedding_dimensions: 768        # Must match the embedding model output
+
+# Bot settings
+bot:
+  system_prompt: |
+    You are a helpful personal assistant with a persistent memory.
+    You remember everything the user tells you across conversations.
+    Be concise, friendly, and helpful. If the user asks you to remember
+    something, confirm that you will. If they ask about something you
+    should know from past conversations, recall it accurately.
+
+    Current date and time: {current_time}
