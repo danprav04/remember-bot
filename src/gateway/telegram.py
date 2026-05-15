@@ -147,6 +147,48 @@ class TelegramGateway(BaseGateway):
         return buf.getvalue()
 
     # ------------------------------------------------------------------
+    # Helper — Send Formatted Message
+    # ------------------------------------------------------------------
+
+    async def _safe_reply(self, update: Update, text: str) -> None:
+        """Reply with Telegram-safe HTML, falling back to plain text if parsing fails."""
+        import re
+
+        # Escape HTML special chars first
+        formatted = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        # Code blocks: ```lang\ncode\n``` or ```code```
+        formatted = re.sub(
+            r'```(?:\w+)?\n(.*?)\n```', r'<pre><code>\1</code></pre>', formatted, flags=re.DOTALL
+        )
+        formatted = re.sub(r'```(.*?)```', r'<pre><code>\1</code></pre>', formatted, flags=re.DOTALL)
+
+        # Inline code: `code`
+        formatted = re.sub(r'(?<!`)`([^`]+)`(?!`)', r'<code>\1</code>', formatted)
+
+        # Bold: **bold**
+        formatted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', formatted)
+
+        # Italic: *italic* or _italic_
+        formatted = re.sub(r'(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)', r'<i>\1</i>', formatted)
+        formatted = re.sub(r'\b_(.*?)_\b', r'<i>\1</i>', formatted)
+
+        # Links: [text](url)
+        formatted = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2">\1</a>', formatted)
+
+        # Headers: # Header
+        formatted = re.sub(r'^#+\s+(.*?)$', r'<b>\1</b>', formatted, flags=re.MULTILINE)
+
+        if not update.message:
+            return
+
+        try:
+            await update.message.reply_text(formatted, parse_mode="HTML")
+        except Exception as e:
+            logger.warning("Failed to send HTML formatted message. Falling back to plain text. Error: %s", e)
+            await update.message.reply_text(text)
+
+    # ------------------------------------------------------------------
     # Telegram handlers — Commands
     # ------------------------------------------------------------------
 
@@ -169,7 +211,7 @@ class TelegramGateway(BaseGateway):
             await update.message.reply_text("⚠️ Bot is still starting up...")
             return
         text = await self._command_handler.handle_help()
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _handle_facts(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -183,7 +225,7 @@ class TelegramGateway(BaseGateway):
             platform="telegram",
             platform_user_id=str(user.id),
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _handle_search(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -199,7 +241,7 @@ class TelegramGateway(BaseGateway):
             platform_user_id=str(user.id),
             query=query,
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _handle_forget(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -215,7 +257,7 @@ class TelegramGateway(BaseGateway):
             platform_user_id=str(user.id),
             arg=arg,
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _handle_model(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -225,7 +267,7 @@ class TelegramGateway(BaseGateway):
             await update.message.reply_text("⚠️ Bot is still starting up...")
             return
         text = await self._command_handler.handle_model()
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _handle_stats(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -239,7 +281,7 @@ class TelegramGateway(BaseGateway):
             platform="telegram",
             platform_user_id=str(user.id),
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="HTML")
 
     # ------------------------------------------------------------------
     # Telegram handlers — Media Messages
@@ -293,7 +335,7 @@ class TelegramGateway(BaseGateway):
             )
 
             response_text = await self._orchestrator.handle_message(incoming)
-            await update.message.reply_text(response_text)
+            await self._safe_reply(update, response_text)
 
         except Exception:
             logger.exception("Error processing voice from %s", user.id)
@@ -342,7 +384,7 @@ class TelegramGateway(BaseGateway):
             )
 
             response_text = await self._orchestrator.handle_message(incoming)
-            await update.message.reply_text(response_text)
+            await self._safe_reply(update, response_text)
 
         except Exception:
             logger.exception("Error processing photo from %s", user.id)
@@ -383,7 +425,7 @@ class TelegramGateway(BaseGateway):
 
         try:
             response_text = await self._orchestrator.handle_message(incoming)
-            await update.message.reply_text(response_text)
+            await self._safe_reply(update, response_text)
         except Exception:
             logger.exception("Error processing message from %s", incoming.platform_user_id)
             await update.message.reply_text(

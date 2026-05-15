@@ -40,14 +40,14 @@ class CommandHandler:
     async def handle_help(self) -> str:
         """Return a help message listing all available commands."""
         return (
-            "🧠 *Remember Bot — Commands*\n"
+            "🧠 <b>Remember Bot — Commands</b>\n"
             "\n"
-            "💬 *Memory*\n"
+            "💬 <b>Memory</b>\n"
             "/facts — Show all stored facts about you\n"
-            "/search <query> — Search your facts by keyword\n"
-            "/forget <id|all> — Forget a specific fact or all facts\n"
+            "/search &lt;query&gt; — Search your facts by keyword\n"
+            "/forget &lt;id|all&gt; — Forget a specific fact or all facts\n"
             "\n"
-            "⚙️ *Info*\n"
+            "⚙️ <b>Info</b>\n"
             "/model — Show current AI model configuration\n"
             "/stats — Show your memory statistics\n"
             "/help — Show this help message\n"
@@ -71,10 +71,12 @@ class CommandHandler:
             if not facts:
                 return "📭 No facts stored yet. Chat with me and I'll start remembering!"
 
-            lines = [f"🧠 *Your stored facts* ({len(facts)} total):\n"]
+            lines = [f"🧠 <b>Your stored facts</b> ({len(facts)} total):\n"]
             for fact in facts:
                 tags_str = f"  [{', '.join(fact.tags)}]" if fact.tags else ""
-                lines.append(f"  `[{fact.id}]` {fact.content}{tags_str}")
+                # Escape HTML in content just in case
+                content = fact.content.replace("<", "&lt;").replace(">", "&gt;")
+                lines.append(f"  <code>[{fact.id}]</code> {content}{tags_str}")
 
             return "\n".join(lines)
 
@@ -113,10 +115,11 @@ class CommandHandler:
             if not results:
                 return f"🔍 No facts found matching \"{query.strip()}\"."
 
-            lines = [f"🔍 *Facts matching \"{query.strip()}\"* ({len(results)}):\n"]
+            lines = [f"🔍 <b>Facts matching \"{query.strip()}\"</b> ({len(results)}):\n"]
             for fact in results:
                 tags_str = f"  [{', '.join(fact.tags)}]" if fact.tags else ""
-                lines.append(f"  `[{fact.id}]` {fact.content}{tags_str}")
+                content = fact.content.replace("<", "&lt;").replace(">", "&gt;")
+                lines.append(f"  <code>[{fact.id}]</code> {content}{tags_str}")
 
             return "\n".join(lines)
 
@@ -156,22 +159,22 @@ class CommandHandler:
             await session.commit()
 
             if success:
-                return f"🗑️ Forgot fact `[{fact_id}]`."
+                return f"🗑️ Forgot fact <code>[{fact_id}]</code>."
             else:
-                return f"❌ Fact `[{fact_id}]` not found or already forgotten."
+                return f"❌ Fact <code>[{fact_id}]</code> not found or already forgotten."
 
     async def handle_model(self) -> str:
         """Show the current model configuration for all tasks."""
         tasks = ["chat", "fact_extraction", "summarization", "embeddings", "vision"]
-        lines = ["⚙️ *Current AI Model Configuration*\n"]
+        lines = ["⚙️ <b>Current AI Model Configuration</b>\n"]
 
         for task_name in tasks:
             info = await self.llm_router.get_task_info(task_name)
             if "error" in info:
-                lines.append(f"  *{task_name}*: not configured")
+                lines.append(f"  <b>{task_name}</b>: not configured")
             else:
                 lines.append(
-                    f"  *{task_name}*: {info['provider']}/{info['model']}"
+                    f"  <b>{task_name}</b>: {info['provider']}/{info['model']}"
                 )
                 if info.get("fallbacks"):
                     for i, fb in enumerate(info["fallbacks"], 1):
@@ -208,7 +211,7 @@ class CommandHandler:
             emb_count = emb_result.scalar_one()
 
             return (
-                f"📊 *Your Memory Stats*\n"
+                f"📊 <b>Your Memory Stats</b>\n"
                 f"\n"
                 f"  💬 Messages: {msg_count}\n"
                 f"  🧠 Facts: {fact_count}\n"
