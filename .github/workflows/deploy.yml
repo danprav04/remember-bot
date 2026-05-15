@@ -1,0 +1,162 @@
+name: Deploy Remember Bot via Docker Compose
+
+on:
+  push:
+    branches:
+      - main # Deploys only on pushes to the main branch
+
+env:
+  REGISTRY: ghcr.io
+  CONTAINER_NAME: "rememberbot"         # Base name for the systemd service & folder
+  IMAGE_REPO_NAME: "rememberbot-app"    # Name for the Docker image repository
+  DEPLOY_PATH: "/opt/rememberbot"       # Folder on the server to store config files
+
+jobs:
+  # ====================================================================
+  # JOB 1: Build the Docker image and push it to the GitHub Registry
+  # ====================================================================
+  build-and-push-image:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_uri: ${{ steps.get-primary-tag.outputs.primary_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image owner
+        run: |
+          echo "IMAGE_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata for tagging
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER_LC }}/${{ env.IMAGE_REPO_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Get the primary image tag for deployment
+        id: get-primary-tag
+        run: |
+          PRIMARY_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          echo "primary_tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
+        shell: bash
+
+  # ====================================================================
+  # JOB 2: Deploy the stack to the production server
+  # ====================================================================
+  deploy-to-server:
+    name: Deploy to Production Server
+    runs-on: ubuntu-latest
+    needs: build-and-push-image
+    environment: production
+
+    steps:
+      - name: Checkout repository (for compose files)
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key for server access
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Copy deployment files to server
+        env:
+          TARGET_SSH_HOST: ${{ secrets.SSH_HOST }}
+          TARGET_SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          ssh-keyscan -H "${TARGET_SSH_HOST}" >> ~/.ssh/known_hosts
+          ssh "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" "sudo mkdir -p ${{ env.DEPLOY_PATH }} && sudo chown -R ${TARGET_SSH_USER}:${TARGET_SSH_USER} ${{ env.DEPLOY_PATH }}"
+          scp docker-compose.yml config.yaml init.sql "${TARGET_SSH_USER}@${TARGET_SSH_HOST}:${{ env.DEPLOY_PATH }}/"
+        shell: bash
+
+      - name: Deploy via SSH
+        env:
+          TARGET_SSH_HOST: ${{ secrets.SSH_HOST }}
+          TARGET_SSH_USER: ${{ secrets.SSH_USER }}
+          FULL_IMAGE_URI: ${{ needs.build-and-push-image.outputs.image_uri }}
+          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+          # Bot Secrets
+          AISTUDIO_API_KEY: ${{ secrets.AISTUDIO_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+        run: |
+          ssh -o StrictHostKeyChecking=no "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" << EOF
+            set -ex
+
+            cd ${{ env.DEPLOY_PATH }}
+
+            # Log in to GitHub Container Registry
+            echo "${GHCR_PULL_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+
+            # Create production override for docker-compose to use the GHCR image instead of building locally
+            cat << 'INNER_EOF' > docker-compose.override.yml
+            services:
+              app:
+                build: !reset null
+                image: ${FULL_IMAGE_URI}
+            INNER_EOF
+
+            # Create the .env file with secrets
+            cat << INNER_EOF > .env
+            AISTUDIO_API_KEY=${AISTUDIO_API_KEY}
+            TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+            WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}
+            INNER_EOF
+
+            # Create the systemd service file for Docker Compose
+            echo "[Unit]" | sudo tee "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "Description=${{ env.CONTAINER_NAME }} Docker Compose Stack" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "Requires=docker.service" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "After=docker.service network.target" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "[Service]" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "Type=oneshot" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "RemainAfterExit=yes" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "WorkingDirectory=${{ env.DEPLOY_PATH }}" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "ExecStart=/usr/bin/docker compose up -d" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "ExecStop=/usr/bin/docker compose down" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "[Install]" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+            echo "WantedBy=multi-user.target" | sudo tee -a "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"
+
+            # Pull latest images and restart the stack
+            sudo docker compose pull app
+            
+            sudo systemctl daemon-reload
+            sudo systemctl enable "${{ env.CONTAINER_NAME }}.service"
+            sudo systemctl restart "${{ env.CONTAINER_NAME }}.service"
+
+            echo "Deployment of ${{ env.CONTAINER_NAME }} finished successfully."
+          EOF
+        shell: bash
