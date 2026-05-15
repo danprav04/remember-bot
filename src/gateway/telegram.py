@@ -1,11 +1,14 @@
 """
 Telegram gateway — handles incoming messages via webhook and sends responses.
+Supports text, voice, and photo messages.
 Uses python-telegram-bot v22 with FastAPI webhook integration.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 from fastapi import Request, Response
@@ -68,6 +71,14 @@ class TelegramGateway(BaseGateway):
         self._application.add_handler(CommandHandler("model", self._handle_model))
         self._application.add_handler(CommandHandler("stats", self._handle_stats))
 
+        # Media message handlers
+        self._application.add_handler(
+            MessageHandler(filters.VOICE | filters.AUDIO, self._handle_voice)
+        )
+        self._application.add_handler(
+            MessageHandler(filters.PHOTO, self._handle_photo)
+        )
+
         # Text message handler (must be last — catches everything else)
         self._application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
@@ -125,6 +136,17 @@ class TelegramGateway(BaseGateway):
             )
 
     # ------------------------------------------------------------------
+    # Helper — download Telegram file to base64
+    # ------------------------------------------------------------------
+
+    async def _download_file_base64(self, file_id: str) -> bytes:
+        """Download a Telegram file and return raw bytes."""
+        tg_file = await self._application.bot.get_file(file_id)
+        buf = BytesIO()
+        await tg_file.download_to_memory(buf)
+        return buf.getvalue()
+
+    # ------------------------------------------------------------------
     # Telegram handlers — Commands
     # ------------------------------------------------------------------
 
@@ -134,7 +156,8 @@ class TelegramGateway(BaseGateway):
         """Handle the /start command."""
         await update.message.reply_text(
             "👋 Hi! I'm your memory bot. Tell me anything and I'll remember it.\n\n"
-            "Just chat naturally — I'll remember everything you tell me.\n\n"
+            "Just chat naturally — I'll remember everything you tell me.\n"
+            "You can also send me voice messages and photos!\n\n"
             "Type /help to see all available commands.",
         )
 
@@ -219,7 +242,111 @@ class TelegramGateway(BaseGateway):
         await update.message.reply_text(text, parse_mode="Markdown")
 
     # ------------------------------------------------------------------
-    # Telegram handlers — Messages
+    # Telegram handlers — Media Messages
+    # ------------------------------------------------------------------
+
+    async def _handle_voice(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle incoming voice/audio messages."""
+        if not update.message:
+            return
+
+        user = update.message.from_user
+
+        logger.info(
+            "Incoming voice message from %s (%s)",
+            user.full_name, user.id,
+        )
+
+        if self._orchestrator is None:
+            await update.message.reply_text("⚠️ Bot is still starting up, please wait...")
+            return
+
+        try:
+            # Get file info
+            voice = update.message.voice or update.message.audio
+            if voice is None:
+                return
+
+            # Download voice file
+            file_bytes = await self._download_file_base64(voice.file_id)
+            media_b64 = base64.b64encode(file_bytes).decode("utf-8")
+
+            # Determine MIME type
+            mime_type = voice.mime_type or "audio/ogg"
+
+            incoming = IncomingMessage(
+                platform="telegram",
+                platform_user_id=str(user.id),
+                platform_chat_id=str(update.message.chat_id),
+                display_name=user.full_name,
+                text="[Voice message]",
+                media_type="voice",
+                media_base64=media_b64,
+                media_mime=mime_type,
+            )
+
+            response_text = await self._orchestrator.handle_message(incoming)
+            await update.message.reply_text(response_text)
+
+        except Exception:
+            logger.exception("Error processing voice from %s", user.id)
+            await update.message.reply_text(
+                "❌ Sorry, I couldn't process your voice message. Please try again."
+            )
+
+    async def _handle_photo(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle incoming photo messages."""
+        if not update.message:
+            return
+
+        user = update.message.from_user
+
+        logger.info(
+            "Incoming photo from %s (%s)",
+            user.full_name, user.id,
+        )
+
+        if self._orchestrator is None:
+            await update.message.reply_text("⚠️ Bot is still starting up, please wait...")
+            return
+
+        try:
+            # Get the highest resolution photo
+            photo = update.message.photo[-1]  # Last element is highest res
+
+            # Download photo
+            file_bytes = await self._download_file_base64(photo.file_id)
+            media_b64 = base64.b64encode(file_bytes).decode("utf-8")
+
+            # Caption (if any)
+            caption = update.message.caption or ""
+
+            incoming = IncomingMessage(
+                platform="telegram",
+                platform_user_id=str(user.id),
+                platform_chat_id=str(update.message.chat_id),
+                display_name=user.full_name,
+                text=caption if caption else "[Photo sent by user]",
+                media_type="photo",
+                media_base64=media_b64,
+                media_mime="image/jpeg",
+            )
+
+            response_text = await self._orchestrator.handle_message(incoming)
+            await update.message.reply_text(response_text)
+
+        except Exception:
+            logger.exception("Error processing photo from %s", user.id)
+            await update.message.reply_text(
+                "❌ Sorry, I couldn't process your photo. Please try again."
+            )
+
+    # ------------------------------------------------------------------
+    # Telegram handlers — Text Messages
     # ------------------------------------------------------------------
 
     async def _handle_message(

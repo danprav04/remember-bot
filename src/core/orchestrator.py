@@ -21,6 +21,7 @@ from src.db.repositories.users import UserRepository
 from src.gateway.base import IncomingMessage
 from src.llm.router import LLMRouter
 from src.memory.episodic import EpisodicMemory
+from src.memory.decay import MemoryDecay
 from src.memory.summarizer import ConversationSummarizer
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,16 @@ class Orchestrator:
         self.episodic_memory = episodic_memory
         self.summarizer = summarizer
         self._session_factory = get_session_factory()
+
+        # Memory decay — runs periodically based on message count
+        self._memory_decay = MemoryDecay(
+            decay_factor=config.decay.decay_factor,
+            min_relevance=config.decay.min_relevance,
+            min_age_hours=config.decay.min_age_hours,
+        )
+        self._decay_enabled = config.decay.enabled
+        self._decay_interval = config.decay.interval_messages
+        self._message_counter = 0
 
     async def handle_message(self, incoming: IncomingMessage) -> str:
         """
@@ -96,11 +107,17 @@ class Orchestrator:
                     user_display_name=incoming.display_name,
                 )
 
-                # 4. Call LLM
-                llm_response = await self.llm_router.chat(
-                    task="chat",
-                    messages=context_messages,
-                )
+                # 4. Call LLM (with media support)
+                if incoming.media_type and incoming.media_base64:
+                    llm_response = await self._handle_media_message(
+                        incoming=incoming,
+                        context_messages=context_messages,
+                    )
+                else:
+                    llm_response = await self.llm_router.chat(
+                        task="chat",
+                        messages=context_messages,
+                    )
 
                 logger.info(
                     "LLM response: provider=%s model=%s tokens=%d+%d latency=%.0fms",
@@ -145,6 +162,51 @@ class Orchestrator:
                 await session.rollback()
                 logger.exception("Error in orchestrator pipeline")
                 raise
+
+    async def _handle_media_message(
+        self,
+        incoming: IncomingMessage,
+        context_messages: list[dict],
+    ) -> LLMResponse:
+        """
+        Handle voice or photo messages via multimodal LLM.
+        Builds context from the assembled messages and sends the media inline.
+        """
+        from src.llm.provider import LLMResponse
+
+        # Build a system prompt from context (system messages + facts)
+        system_parts = []
+        for msg in context_messages:
+            if msg["role"] == "system":
+                system_parts.append(msg["content"])
+        system_prompt = "\n\n".join(system_parts)
+
+        if incoming.media_type == "voice":
+            text_prompt = (
+                "The user sent a voice message. Listen to the audio and respond "
+                "to what they said. If they asked you to remember something, confirm it. "
+                "If they asked a question, answer it using your memory of this user."
+            )
+            if incoming.text:
+                text_prompt = incoming.text
+        elif incoming.media_type == "photo":
+            text_prompt = incoming.text or (
+                "The user sent a photo. Describe what you see and respond helpfully."
+            )
+        else:
+            text_prompt = incoming.text
+
+        # Use 'vision' task for both images and audio
+        task = "vision"
+
+        return await self.llm_router.chat_with_media(
+            task=task,
+            text=text_prompt,
+            media_base64=incoming.media_base64,
+            media_mime=incoming.media_mime,
+            system_prompt=system_prompt,
+            temperature=0.7,
+        )
 
     async def _background_memory_tasks(
         self,
@@ -194,6 +256,16 @@ class Orchestrator:
                     user_id=user_id,
                 )
                 if summarized:
+                    await session.commit()
+
+            # 4. Memory decay (periodically)
+            self._message_counter += 1
+            if (
+                self._decay_enabled
+                and self._message_counter % self._decay_interval == 0
+            ):
+                async with self._session_factory() as session:
+                    stats = await self._memory_decay.run_decay_cycle(session)
                     await session.commit()
 
         except Exception:

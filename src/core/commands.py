@@ -52,7 +52,8 @@ class CommandHandler:
             "/stats — Show your memory statistics\n"
             "/help — Show this help message\n"
             "\n"
-            "💡 Just chat normally — I'll remember important details automatically!"
+            "💡 Chat naturally, send voice messages 🎤, or photos 📷\n"
+            "I'll remember important details automatically!"
         )
 
     async def handle_facts(
@@ -161,7 +162,7 @@ class CommandHandler:
 
     async def handle_model(self) -> str:
         """Show the current model configuration for all tasks."""
-        tasks = ["chat", "fact_extraction", "summarization", "embeddings"]
+        tasks = ["chat", "fact_extraction", "summarization", "embeddings", "vision"]
         lines = ["⚙️ *Current AI Model Configuration*\n"]
 
         for task_name in tasks:

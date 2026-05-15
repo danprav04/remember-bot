@@ -141,6 +141,18 @@ class BotConfig:
         self.system_prompt: str = bot.get("system_prompt", "You are a helpful assistant.")
 
 
+class DecayConfig:
+    """Memory decay settings from config.yaml."""
+
+    def __init__(self, data: dict[str, Any]):
+        decay = data.get("decay", {})
+        self.enabled: bool = decay.get("enabled", True)
+        self.decay_factor: float = decay.get("decay_factor", 0.95)
+        self.min_relevance: float = decay.get("min_relevance", 0.1)
+        self.min_age_hours: int = decay.get("min_age_hours", 24)
+        self.interval_messages: int = decay.get("interval_messages", 50)
+
+
 class AppConfig:
     """Top-level application configuration combining env vars and config.yaml."""
 
@@ -150,6 +162,7 @@ class AppConfig:
         self.llm = LLMConfig(yaml_data, self.settings)
         self.memory = MemoryConfig(yaml_data)
         self.bot = BotConfig(yaml_data)
+        self.decay = DecayConfig(yaml_data)
 
 
 @lru_cache(maxsize=1)

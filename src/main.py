@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Remember Bot",
     description="A memory-first chatbot with infinite context retention.",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 

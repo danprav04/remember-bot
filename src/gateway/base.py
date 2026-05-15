@@ -16,7 +16,10 @@ class IncomingMessage:
     platform_user_id: str        # Telegram user ID or WhatsApp phone
     platform_chat_id: str        # Chat/conversation ID on the platform
     display_name: str | None     # User's display name (if available)
-    text: str                    # Message text content
+    text: str                    # Message text content (or transcription for voice)
+    media_type: str | None = None   # 'voice' | 'photo' | None
+    media_base64: str | None = None # Base64-encoded media data
+    media_mime: str | None = None   # MIME type e.g. 'audio/ogg', 'image/jpeg'
 
 
 class BaseGateway(ABC):

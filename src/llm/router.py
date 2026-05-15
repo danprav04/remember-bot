@@ -104,6 +104,64 @@ class LLMRouter:
             f"All providers failed for task '{task}'. Last error: {last_error}"
         )
 
+    async def chat_with_media(
+        self,
+        task: str,
+        text: str,
+        media_base64: str,
+        media_mime: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        """
+        Send a multimodal chat completion (image/audio) for the given task.
+        Uses the configured provider + model, falling back if enabled.
+        """
+        task_config = self.config.llm.tasks.get(task)
+        if task_config is None:
+            raise KeyError(f"No LLM task config found for '{task}'")
+
+        attempts: list[tuple[str, str]] = [(task_config.provider, task_config.model)]
+        if self.config.llm.fallback_enabled:
+            for fb in task_config.fallbacks:
+                attempts.append((fb.provider, fb.model))
+
+        last_error: Exception | None = None
+        for provider_name, model in attempts:
+            if provider_name not in self._providers:
+                logger.warning(
+                    "Skipping fallback provider '%s' — not configured", provider_name
+                )
+                continue
+
+            try:
+                provider = self._get_provider(provider_name)
+                result = await provider.chat_with_media(
+                    text=text,
+                    media_base64=media_base64,
+                    media_mime=media_mime,
+                    model=model,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                )
+                if provider_name != task_config.provider:
+                    logger.info(
+                        "Task '%s' served by fallback: %s/%s", task, provider_name, model
+                    )
+                return result
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Provider '%s' model '%s' failed for media task '%s': %s",
+                    provider_name, model, task, e,
+                )
+                continue
+
+        raise RuntimeError(
+            f"All providers failed for media task '{task}'. Last error: {last_error}"
+        )
+
     async def get_task_info(self, task: str) -> dict:
         """Return the current provider + model config for a task (for metadata)."""
         task_config = self.config.llm.tasks.get(task)
