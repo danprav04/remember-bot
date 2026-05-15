@@ -24,6 +24,8 @@ from src.llm.router import LLMRouter
 from src.memory.episodic import EpisodicMemory
 from src.memory.semantic import SemanticMemory
 from src.memory.summarizer import ConversationSummarizer
+from fastapi.responses import HTMLResponse
+from src.utils.static_pages import PRIVACY_POLICY_HTML
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -149,3 +151,9 @@ app = FastAPI(
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "remember-bot"}
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_policy():
+    """Serve the privacy policy page."""
+    return PRIVACY_POLICY_HTML
