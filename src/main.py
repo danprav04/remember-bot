@@ -132,7 +132,6 @@ async def lifespan(app: FastAPI):
             verify_token=config.settings.whatsapp_verify_token,
             app_id=int(config.settings.whatsapp_app_id) if config.settings.whatsapp_app_id else 0,
             app_secret=config.settings.whatsapp_app_secret,
-            webhook_base_url=config.settings.webhook_base_url,
         )
         whatsapp_gateway.set_orchestrator(orchestrator)
 
