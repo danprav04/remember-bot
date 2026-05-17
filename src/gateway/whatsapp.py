@@ -1,6 +1,6 @@
 """
 WhatsApp gateway — handles incoming messages via the WhatsApp Cloud API
-using PyWa with FastAPI webhook integration.
+using PyWa (async) with FastAPI webhook integration.
 
 Supports text, voice/audio, and image messages. Converts incoming messages
 to the shared IncomingMessage format and delegates to the orchestrator.
@@ -14,8 +14,7 @@ import re
 from io import BytesIO
 from typing import TYPE_CHECKING
 
-import httpx
-from pywa import WhatsApp
+from pywa_async import WhatsApp
 from pywa.types import Message as WAMessage
 
 from src.gateway.base import BaseGateway, IncomingMessage
@@ -72,6 +71,7 @@ class WhatsAppGateway(BaseGateway):
             verify_token=self.verify_token,
             app_id=self.app_id,
             app_secret=self.app_secret,
+            webhook_challenge_delay=15,  # Give FastAPI time to start before Meta verifies
         )
 
         # Register the message handler on the PyWa instance
@@ -97,7 +97,7 @@ class WhatsAppGateway(BaseGateway):
         """Send a text message to a WhatsApp user by phone number."""
         if self._wa is None:
             raise RuntimeError("Gateway not set up")
-        self._wa.send_message(to=chat_id, text=text)
+        await self._wa.send_message(to=chat_id, text=text)
 
     # ------------------------------------------------------------------
     # Internal — Route incoming messages
@@ -131,7 +131,7 @@ class WhatsAppGateway(BaseGateway):
         except Exception:
             logger.exception("Error processing WhatsApp message from %s", msg.from_user.wa_id)
             try:
-                client.send_message(
+                await client.send_message(
                     to=msg.from_user.wa_id,
                     text="❌ Sorry, something went wrong. Please try again.",
                 )
@@ -160,7 +160,7 @@ class WhatsAppGateway(BaseGateway):
         )
 
         if self._orchestrator is None:
-            client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
+            await client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
             return
 
         incoming = IncomingMessage(
@@ -172,7 +172,7 @@ class WhatsAppGateway(BaseGateway):
         )
 
         response_text = await self._orchestrator.handle_message(incoming)
-        client.send_message(to=sender, text=response_text)
+        await client.send_message(to=sender, text=response_text)
 
     # ------------------------------------------------------------------
     # Image messages
@@ -189,11 +189,11 @@ class WhatsAppGateway(BaseGateway):
         logger.info("Incoming WhatsApp image from %s (%s)", sender_name, sender)
 
         if self._orchestrator is None:
-            client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
+            await client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
             return
 
         try:
-            image_bytes = msg.image.download(in_memory=True)
+            image_bytes = await msg.image.download(in_memory=True)
             media_b64 = base64.b64encode(image_bytes).decode("utf-8")
             caption = msg.caption or ""
 
@@ -209,11 +209,11 @@ class WhatsAppGateway(BaseGateway):
             )
 
             response_text = await self._orchestrator.handle_message(incoming)
-            client.send_message(to=sender, text=response_text)
+            await client.send_message(to=sender, text=response_text)
 
         except Exception:
             logger.exception("Error processing WhatsApp image from %s", sender)
-            client.send_message(
+            await client.send_message(
                 to=sender,
                 text="❌ Sorry, I couldn't process your image. Please try again.",
             )
@@ -233,7 +233,7 @@ class WhatsAppGateway(BaseGateway):
         logger.info("Incoming WhatsApp voice/audio from %s (%s)", sender_name, sender)
 
         if self._orchestrator is None:
-            client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
+            await client.send_message(to=sender, text="⚠️ Bot is still starting up, please wait...")
             return
 
         try:
@@ -241,7 +241,7 @@ class WhatsAppGateway(BaseGateway):
             if media_obj is None:
                 return
 
-            audio_bytes = media_obj.download(in_memory=True)
+            audio_bytes = await media_obj.download(in_memory=True)
 
             # Convert to WAV for the transcription pipeline (same as Telegram)
             from pydub import AudioSegment
@@ -265,11 +265,11 @@ class WhatsAppGateway(BaseGateway):
             )
 
             response_text = await self._orchestrator.handle_message(incoming)
-            client.send_message(to=sender, text=response_text)
+            await client.send_message(to=sender, text=response_text)
 
         except Exception:
             logger.exception("Error processing WhatsApp audio from %s", sender)
-            client.send_message(
+            await client.send_message(
                 to=sender,
                 text="❌ Sorry, I couldn't process your voice message. Please try again.",
             )
@@ -291,7 +291,7 @@ class WhatsAppGateway(BaseGateway):
         args = parts[1] if len(parts) > 1 else ""
 
         if self._command_handler is None:
-            client.send_message(to=sender, text="⚠️ Bot is still starting up...")
+            await client.send_message(to=sender, text="⚠️ Bot is still starting up...")
             return
 
         response: str | None = None
@@ -335,7 +335,7 @@ class WhatsAppGateway(BaseGateway):
         if response:
             # Convert HTML formatting to WhatsApp-compatible formatting
             response = self._html_to_whatsapp(response)
-            client.send_message(to=sender, text=response)
+            await client.send_message(to=sender, text=response)
 
     # ------------------------------------------------------------------
     # Formatting helpers
