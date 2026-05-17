@@ -42,7 +42,6 @@ class WhatsAppGateway(BaseGateway):
         verify_token: str,
         app_id: int,
         app_secret: str,
-        webhook_base_url: str,
     ):
         self.phone_id = phone_id
         self.token = token
