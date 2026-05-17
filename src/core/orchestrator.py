@@ -124,6 +124,7 @@ class Orchestrator:
                     conversation_id=conversation.id,
                     current_message_text=incoming.text,
                     user_display_name=incoming.display_name,
+                    platform=incoming.platform,
                 )
 
                 # 4. Call LLM (with media support)

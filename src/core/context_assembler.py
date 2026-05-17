@@ -51,6 +51,7 @@ class ContextAssembler:
         conversation_id: int,
         current_message_text: str,
         user_display_name: str | None = None,
+        platform: str = "telegram",
     ) -> list[dict[str, str]]:
         """
         Build the complete messages list for the LLM, incorporating
@@ -89,6 +90,12 @@ class ContextAssembler:
 
         if user_display_name:
             system_prompt += f"\n\nThe user's name is: {user_display_name}"
+
+        # Inject platform-specific formatting instructions
+        if platform == "whatsapp":
+            system_prompt += "\n\nCRITICAL: You are chatting on WhatsApp. You MUST format your text using ONLY WhatsApp formatting rules: *bold*, _italic_, ~strikethrough~. Do NOT use **bold** or markdown headers (#) or HTML."
+        else:
+            system_prompt += "\n\nCRITICAL: You are chatting on Telegram. You MUST format your text using Telegram Markdown formatting (e.g. **bold**, *italic*)."
 
         # Inject semantic facts into system prompt
         if facts:

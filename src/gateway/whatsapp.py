@@ -209,7 +209,10 @@ class WhatsAppGateway(BaseGateway):
             text=text,
         )
 
+        import asyncio
+        asyncio.create_task(self._send_typing_indicator(sender))
         response = await self._orchestrator.handle_message(incoming)
+        response = self._markdown_to_whatsapp(response)
         await self._send_text(sender, response)
 
     # ------------------------------------------------------------------
@@ -243,7 +246,10 @@ class WhatsAppGateway(BaseGateway):
                 media_mime=mime_type,
             )
 
+            import asyncio
+            asyncio.create_task(self._send_typing_indicator(sender))
             response = await self._orchestrator.handle_message(incoming)
+            response = self._markdown_to_whatsapp(response)
             await self._send_text(sender, response)
         except Exception:
             logger.exception("Error processing WhatsApp image from %s", sender)
@@ -285,7 +291,10 @@ class WhatsAppGateway(BaseGateway):
                 media_mime="audio/wav",
             )
 
+            import asyncio
+            asyncio.create_task(self._send_typing_indicator(sender))
             response = await self._orchestrator.handle_message(incoming)
+            response = self._markdown_to_whatsapp(response)
             await self._send_text(sender, response)
         except Exception:
             logger.exception("Error processing WhatsApp audio from %s", sender)
@@ -365,6 +374,25 @@ class WhatsAppGateway(BaseGateway):
         if resp.status_code != 200:
             logger.error("Failed to send WhatsApp message: %s %s", resp.status_code, resp.text)
 
+    async def _send_typing_indicator(self, to: str) -> None:
+        """Send a typing indicator (action: typing_on)."""
+        if self._http is None:
+            return
+
+        url = f"{GRAPH_API_BASE}/{self.phone_id}/messages"
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "typing_indicator",
+            "typing_indicator": {
+                "action": "typing_on"
+            }
+        }
+        resp = await self._http.post(url, json=payload)
+        if resp.status_code != 200:
+            logger.debug("Typing indicator not supported or failed: %s", resp.text)
+
     async def _download_media(self, media_id: str) -> bytes:
         """Download media from WhatsApp (two-step: get URL, then download)."""
         if self._http is None:
@@ -393,4 +421,13 @@ class WhatsAppGateway(BaseGateway):
         text = text.replace("&lt;", "<")
         text = text.replace("&gt;", ">")
         text = text.replace("&amp;", "&")
+        return text
+
+    @staticmethod
+    def _markdown_to_whatsapp(text: str) -> str:
+        """Convert standard Markdown to WhatsApp formatting (best effort fallback)."""
+        # Convert **bold** to *bold*
+        text = re.sub(r"\*\*(.*?)\*\*", r"*\1*", text)
+        # Convert ### headers to *bold*
+        text = re.sub(r"^#+\s+(.*?)$", r"*\1*", text, flags=re.MULTILINE)
         return text

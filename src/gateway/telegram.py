@@ -436,6 +436,7 @@ class TelegramGateway(BaseGateway):
                 media_mime="audio/wav",
             )
 
+            await update.message.chat.send_action("typing")
             response_text = await self._orchestrator.handle_message(incoming)
             await self._safe_reply(update, response_text)
 
@@ -485,6 +486,7 @@ class TelegramGateway(BaseGateway):
                 media_mime="image/jpeg",
             )
 
+            await update.message.chat.send_action("typing")
             response_text = await self._orchestrator.handle_message(incoming)
             await self._safe_reply(update, response_text)
 
@@ -526,6 +528,7 @@ class TelegramGateway(BaseGateway):
             return
 
         try:
+            await update.message.chat.send_action("typing")
             response_text = await self._orchestrator.handle_message(incoming)
             await self._safe_reply(update, response_text)
         except Exception:
