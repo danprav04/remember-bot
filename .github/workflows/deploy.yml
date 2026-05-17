@@ -110,6 +110,11 @@ jobs:
           AISTUDIO_API_KEY: ${{ secrets.AISTUDIO_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WHATSAPP_PHONE_ID: ${{ secrets.WHATSAPP_PHONE_ID }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_ID: ${{ secrets.WHATSAPP_APP_ID }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
         run: |
           ssh -o StrictHostKeyChecking=no "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" << EOF
             set -ex
@@ -129,6 +134,11 @@ jobs:
             echo "AISTUDIO_API_KEY=${AISTUDIO_API_KEY}" > .env
             echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
             echo "WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}" >> .env
+            echo "WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID}" >> .env
+            echo "WHATSAPP_TOKEN=${WHATSAPP_TOKEN}" >> .env
+            echo "WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}" >> .env
+            echo "WHATSAPP_APP_ID=${WHATSAPP_APP_ID}" >> .env
+            echo "WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}" >> .env
 
             # Create the systemd service file for Docker Compose
             echo "[Unit]" | sudo tee "/etc/systemd/system/${{ env.CONTAINER_NAME }}.service"

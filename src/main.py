@@ -19,6 +19,7 @@ from src.core.orchestrator import Orchestrator
 from src.db.engine import get_engine
 from src.db.models import Base
 from src.gateway.telegram import TelegramGateway
+from src.gateway.whatsapp import WhatsAppGateway
 from src.llm.embeddings import EmbeddingService
 from src.llm.router import LLMRouter
 from src.memory.episodic import EpisodicMemory
@@ -44,12 +45,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 telegram_gateway: TelegramGateway | None = None
+whatsapp_gateway: WhatsAppGateway | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
-    global telegram_gateway
+    global telegram_gateway, whatsapp_gateway
 
     config = get_config()
     logger.info("Starting Remember Bot...")
@@ -100,6 +102,13 @@ async def lifespan(app: FastAPI):
         summarizer=summarizer,
     )
 
+    # Initialize command handler (shared by all gateways)
+    command_handler = BotCommandHandler(
+        config=config,
+        llm_router=llm_router,
+        episodic_memory=episodic_memory,
+    )
+
     # Initialize Telegram gateway
     if config.settings.telegram_bot_token:
         telegram_gateway = TelegramGateway(
@@ -107,13 +116,6 @@ async def lifespan(app: FastAPI):
             webhook_base_url=config.settings.webhook_base_url,
         )
         telegram_gateway.set_orchestrator(orchestrator)
-
-        # Initialize and inject command handler
-        command_handler = BotCommandHandler(
-            config=config,
-            llm_router=llm_router,
-            episodic_memory=episodic_memory,
-        )
         telegram_gateway.set_command_handler(command_handler)
 
         await telegram_gateway.setup(app)
@@ -121,6 +123,27 @@ async def lifespan(app: FastAPI):
         logger.info("Telegram gateway started")
     else:
         logger.warning("No TELEGRAM_BOT_TOKEN set — Telegram gateway disabled")
+
+    # Initialize WhatsApp gateway (if credentials provided)
+    if config.settings.whatsapp_phone_id and config.settings.whatsapp_token:
+        whatsapp_gateway = WhatsAppGateway(
+            phone_id=config.settings.whatsapp_phone_id,
+            token=config.settings.whatsapp_token,
+            verify_token=config.settings.whatsapp_verify_token,
+            app_id=int(config.settings.whatsapp_app_id) if config.settings.whatsapp_app_id else 0,
+            app_secret=config.settings.whatsapp_app_secret,
+            webhook_base_url=config.settings.webhook_base_url,
+        )
+        whatsapp_gateway.set_orchestrator(orchestrator)
+
+        # Reuse the same command handler instance (shares link codes)
+        whatsapp_gateway.set_command_handler(command_handler)
+
+        await whatsapp_gateway.setup(app)
+        await whatsapp_gateway.start()
+        logger.info("WhatsApp gateway started")
+    else:
+        logger.warning("No WHATSAPP_PHONE_ID/TOKEN set — WhatsApp gateway disabled")
 
     logger.info("Remember Bot is ready!")
 
@@ -130,6 +153,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Remember Bot...")
     if telegram_gateway:
         await telegram_gateway.stop()
+    if whatsapp_gateway:
+        await whatsapp_gateway.stop()
 
     await engine.dispose()
     logger.info("Shutdown complete")

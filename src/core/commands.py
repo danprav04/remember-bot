@@ -3,11 +3,14 @@ Command Handler — processes bot commands like /facts, /search, /forget, /model
 
 Handles all command logic and DB interactions, called by the gateway layer.
 Each method returns a formatted string response to send back to the user.
+Also handles cross-platform linking (/link on WhatsApp, /connect on Telegram).
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +40,10 @@ class CommandHandler:
         self.episodic_memory = episodic_memory
         self._session_factory = get_session_factory()
 
+        # In-memory store for cross-platform link codes
+        # Maps code -> {"user_id": int, "platform": str, "platform_user_id": str, "expires_at": datetime}
+        self._link_codes: dict[str, dict] = {}
+
     async def handle_help(self) -> str:
         """Return a help message listing all available commands."""
         return (
@@ -52,6 +59,10 @@ class CommandHandler:
             "/stats — Show your memory statistics\n"
             "/export — Download a ZIP of all your data\n"
             "/help — Show this help message\n"
+            "\n"
+            "🔗 <b>Cross-Platform Linking</b>\n"
+            "/link — (WhatsApp) Generate a code to link accounts\n"
+            "/connect &lt;code&gt; — (Telegram) Link your WhatsApp account\n"
             "\n"
             "💡 Chat naturally, send voice messages 🎤, or photos 📷\n"
             "I'll remember important details automatically!"
@@ -306,6 +317,132 @@ class CommandHandler:
             }
 
             return data
+
+    # ------------------------------------------------------------------
+    # Cross-platform linking
+    # ------------------------------------------------------------------
+
+    async def handle_link(self, platform: str, platform_user_id: str) -> str:
+        """Generate a temporary link code (for WhatsApp users to link to Telegram)."""
+        # Clean up expired codes first
+        now = datetime.now(timezone.utc)
+        self._link_codes = {
+            k: v for k, v in self._link_codes.items()
+            if v["expires_at"] > now
+        }
+
+        # Check if this user already has a pending code
+        for code, data in self._link_codes.items():
+            if (
+                data["platform"] == platform
+                and data["platform_user_id"] == platform_user_id
+            ):
+                remaining = int((data["expires_at"] - now).total_seconds())
+                return (
+                    f"🔗 You already have an active link code:\n\n"
+                    f"  <code>{code}</code>\n\n"
+                    f"Send this command in your <b>Telegram</b> chat:\n"
+                    f"  /connect {code}\n\n"
+                    f"⏳ Expires in {remaining} seconds."
+                )
+
+        # Resolve user in DB
+        async with self._session_factory() as session:
+            user = await self._resolve_user(session, platform, platform_user_id)
+            if user is None:
+                return "❌ Send me a message first so I can create your account."
+
+            if user.linked_to is not None:
+                return "✅ Your account is already linked!"
+
+            # Generate a 6-character alphanumeric code
+            code = secrets.token_hex(3).upper()  # e.g. "A1B2C3"
+            self._link_codes[code] = {
+                "user_id": user.id,
+                "platform": platform,
+                "platform_user_id": platform_user_id,
+                "expires_at": now + timedelta(minutes=5),
+            }
+
+            return (
+                f"🔗 <b>Link Code Generated!</b>\n\n"
+                f"Your code: <code>{code}</code>\n\n"
+                f"Now open your <b>Telegram</b> chat with me and send:\n"
+                f"  /connect {code}\n\n"
+                f"⏳ This code expires in 5 minutes."
+            )
+
+    async def handle_connect(
+        self, platform: str, platform_user_id: str, code: str
+    ) -> str:
+        """Connect a WhatsApp account to this Telegram account using a link code."""
+        code = code.strip().upper()
+
+        if not code:
+            return (
+                "Usage: /connect <code>\n\n"
+                "First, send /link in your WhatsApp chat to get a code."
+            )
+
+        # Look up the code
+        now = datetime.now(timezone.utc)
+        link_data = self._link_codes.get(code)
+
+        if link_data is None:
+            return "❌ Invalid or expired code. Send /link on WhatsApp to get a new one."
+
+        if link_data["expires_at"] <= now:
+            del self._link_codes[code]
+            return "❌ This code has expired. Send /link on WhatsApp to get a new one."
+
+        # Don't link to yourself
+        if (
+            link_data["platform"] == platform
+            and link_data["platform_user_id"] == platform_user_id
+        ):
+            return "❌ You can't link an account to itself."
+
+        async with self._session_factory() as session:
+            user_repo = UserRepository(session)
+
+            # The Telegram user is the primary
+            primary_user = await self._resolve_user(
+                session, platform, platform_user_id
+            )
+            if primary_user is None:
+                return "❌ Send me a message first so I can create your account."
+
+            # The WhatsApp user is the secondary (to be merged)
+            secondary_user = await user_repo.get_by_id(link_data["user_id"])
+            if secondary_user is None:
+                del self._link_codes[code]
+                return "❌ The WhatsApp account was not found."
+
+            if secondary_user.linked_to is not None:
+                del self._link_codes[code]
+                return "❌ That WhatsApp account is already linked."
+
+            if primary_user.linked_to is not None:
+                return "❌ Your Telegram account is already linked to another account."
+
+            # Merge: move all WhatsApp data under the Telegram user
+            await user_repo.merge_users(
+                primary_id=primary_user.id,
+                secondary_id=secondary_user.id,
+            )
+            await session.commit()
+
+            # Remove the used code
+            del self._link_codes[code]
+
+            return (
+                f"✅ <b>Accounts linked!</b>\n\n"
+                f"Your WhatsApp ({link_data['platform_user_id']}) and "
+                f"Telegram accounts now share the same memory.\n\n"
+                f"All past facts and conversations have been merged. "
+                f"From now on, anything you tell me on either platform "
+                f"will be remembered across both! 🧠"
+            )
 
     async def _resolve_user(
         self, session: AsyncSession, platform: str, platform_user_id: str

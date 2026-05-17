@@ -35,6 +35,7 @@ class User(Base):
     platform_user_id = Column(String(64), nullable=False)  # Telegram user ID / WhatsApp phone
     display_name = Column(String(255), nullable=True)
     settings = Column(JSONB, default=dict)
+    linked_to = Column(Integer, ForeignKey("users.id"), nullable=True)  # Cross-platform link to primary user
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships

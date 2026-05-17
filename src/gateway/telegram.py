@@ -73,6 +73,7 @@ class TelegramGateway(BaseGateway):
         self._application.add_handler(CommandHandler("model", self._handle_model))
         self._application.add_handler(CommandHandler("stats", self._handle_stats))
         self._application.add_handler(CommandHandler("export", self._handle_export))
+        self._application.add_handler(CommandHandler("connect", self._handle_connect))
 
         # Media message handlers
         self._application.add_handler(
@@ -367,6 +368,22 @@ class TelegramGateway(BaseGateway):
             caption="📦 <b>Export complete!</b> Here is your data in both JSON and readable text formats.",
             parse_mode="HTML"
         )
+
+    async def _handle_connect(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /connect <code> command to link a WhatsApp account."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        code = " ".join(context.args) if context.args else ""
+        text = await self._command_handler.handle_connect(
+            platform="telegram",
+            platform_user_id=str(user.id),
+            code=code,
+        )
+        await update.message.reply_text(text, parse_mode="HTML")
 
     # ------------------------------------------------------------------
     # Telegram handlers — Media Messages

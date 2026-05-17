@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = Field(default="", description="Telegram Bot API token")
 
+    # WhatsApp (Cloud API via PyWa)
+    whatsapp_phone_id: str = Field(default="", description="WhatsApp phone number ID")
+    whatsapp_token: str = Field(default="", description="WhatsApp Cloud API access token")
+    whatsapp_verify_token: str = Field(default="", description="Webhook verification token (you choose this)")
+    whatsapp_app_id: str = Field(default="", description="Meta App ID")
+    whatsapp_app_secret: str = Field(default="", description="Meta App Secret")
+
     # Webhook
     webhook_base_url: str = Field(
         default="http://localhost:8000",

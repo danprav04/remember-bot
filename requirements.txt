@@ -5,6 +5,9 @@ uvicorn[standard]==0.34.3
 # Telegram
 python-telegram-bot==22.7
 
+# WhatsApp
+pywa[fastapi]>=3.9.0
+
 # Database
 sqlalchemy[asyncio]==2.0.41
 asyncpg==0.30.0
