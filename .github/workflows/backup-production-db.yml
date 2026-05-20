@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     permissions:
-      actions: write
+      contents: read
 
     steps:
       - name: Set up SSH key for server access
@@ -39,7 +39,8 @@ jobs:
           REMOTE_CMD="set -euo pipefail"
           REMOTE_CMD="${REMOTE_CMD}; cd '${{ env.DEPLOY_PATH }}'"
           REMOTE_CMD="${REMOTE_CMD} && sudo docker compose exec -T db"
-          REMOTE_CMD="${REMOTE_CMD} pg_dump -U 'bot' -d 'rememberbot'"
+          REMOTE_CMD="${REMOTE_CMD} pg_dump --no-password"
+          REMOTE_CMD="${REMOTE_CMD} -U 'bot' -d 'rememberbot'"
           ssh "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" \
             "${REMOTE_CMD}" \
             | gzip > "${BACKUP_FILE}"
