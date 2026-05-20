@@ -48,6 +48,7 @@ jobs:
             echo "Database backup file is empty: ${BACKUP_FILE}" >&2
             exit 1
           fi
+          gzip -t "${BACKUP_FILE}"
           echo "BACKUP_FILE=${BACKUP_FILE}" >> "${GITHUB_ENV}"
         shell: bash
 
