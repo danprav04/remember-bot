@@ -13,7 +13,8 @@ jobs:
     name: Backup production PostgreSQL database
     runs-on: ubuntu-latest
     environment: production
-    permissions: {}
+    permissions:
+      actions: write
 
     steps:
       - name: Set up SSH key for server access
@@ -55,4 +56,5 @@ jobs:
           name: production-db-backup-${{ github.run_id }}
           path: ${{ env.BACKUP_FILE }}
           if-no-files-found: error
+          # Keep one month of backups for basic recovery coverage.
           retention-days: 30
