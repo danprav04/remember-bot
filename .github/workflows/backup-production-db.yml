@@ -1,0 +1,51 @@
+name: Backup Production Database
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+env:
+  DEPLOY_PATH: "/opt/rememberbot"
+  DB_USER: "bot"
+  DB_NAME: "rememberbot"
+
+jobs:
+  backup-production-db:
+    name: Backup production PostgreSQL database
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Set up SSH key for server access
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        env:
+          TARGET_SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: ssh-keyscan -H "${TARGET_SSH_HOST}" >> ~/.ssh/known_hosts
+        shell: bash
+
+      - name: Dump and compress production database
+        env:
+          TARGET_SSH_HOST: ${{ secrets.SSH_HOST }}
+          TARGET_SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
+          BACKUP_FILE="rememberbot-prod-db-${TIMESTAMP}.sql.gz"
+          ssh "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" \
+            "cd '${{ env.DEPLOY_PATH }}' && sudo docker compose exec -T db pg_dump -U '${{ env.DB_USER }}' -d '${{ env.DB_NAME }}'" \
+            | gzip > "${BACKUP_FILE}"
+          echo "BACKUP_FILE=${BACKUP_FILE}" >> "${GITHUB_ENV}"
+        shell: bash
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-db-backup-${{ github.run_id }}
+          path: ${{ env.BACKUP_FILE }}
+          if-no-files-found: error
+          retention-days: 14
