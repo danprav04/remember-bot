@@ -36,8 +36,11 @@ jobs:
           set -euo pipefail
           TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
           BACKUP_FILE="rememberbot-prod-db-${TIMESTAMP}.sql.gz"
+          REMOTE_CMD="cd '${{ env.DEPLOY_PATH }}'"
+          REMOTE_CMD="${REMOTE_CMD} && sudo docker compose exec -T db"
+          REMOTE_CMD="${REMOTE_CMD} pg_dump -U ${DB_USER} -d ${DB_NAME}"
           ssh "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" \
-            "cd '${{ env.DEPLOY_PATH }}' && sudo docker compose exec -T db pg_dump -U '${{ env.DB_USER }}' -d '${{ env.DB_NAME }}'" \
+            "${REMOTE_CMD}" \
             | gzip > "${BACKUP_FILE}"
           echo "BACKUP_FILE=${BACKUP_FILE}" >> "${GITHUB_ENV}"
         shell: bash
