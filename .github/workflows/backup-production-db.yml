@@ -7,14 +7,13 @@ on:
 
 env:
   DEPLOY_PATH: "/opt/rememberbot"
-  DB_USER: "bot"
-  DB_NAME: "rememberbot"
 
 jobs:
   backup-production-db:
     name: Backup production PostgreSQL database
     runs-on: ubuntu-latest
     environment: production
+    permissions: {}
 
     steps:
       - name: Set up SSH key for server access
@@ -36,12 +35,17 @@ jobs:
           set -euo pipefail
           TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
           BACKUP_FILE="rememberbot-prod-db-${TIMESTAMP}.sql.gz"
-          REMOTE_CMD="cd '${{ env.DEPLOY_PATH }}'"
+          REMOTE_CMD="set -euo pipefail"
+          REMOTE_CMD="${REMOTE_CMD}; cd '${{ env.DEPLOY_PATH }}'"
           REMOTE_CMD="${REMOTE_CMD} && sudo docker compose exec -T db"
-          REMOTE_CMD="${REMOTE_CMD} pg_dump -U ${DB_USER} -d ${DB_NAME}"
+          REMOTE_CMD="${REMOTE_CMD} pg_dump -U 'bot' -d 'rememberbot'"
           ssh "${TARGET_SSH_USER}@${TARGET_SSH_HOST}" \
             "${REMOTE_CMD}" \
             | gzip > "${BACKUP_FILE}"
+          if [ ! -s "${BACKUP_FILE}" ]; then
+            echo "Database backup file is empty: ${BACKUP_FILE}" >&2
+            exit 1
+          fi
           echo "BACKUP_FILE=${BACKUP_FILE}" >> "${GITHUB_ENV}"
         shell: bash
 
@@ -51,4 +55,4 @@ jobs:
           name: production-db-backup-${{ github.run_id }}
           path: ${{ env.BACKUP_FILE }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
