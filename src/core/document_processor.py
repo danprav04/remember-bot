@@ -239,6 +239,8 @@ class DocumentProcessor:
             preview = parsed.text[:500] if parsed.text else ""
 
             # 2. Chunk the text
+            logger.info("Document %d: parsed OK, chunking %d chars...",
+                        document_id, len(parsed.text))
             chunks = self._chunker.chunk(parsed.text)
             if not chunks:
                 async with self._session_factory() as session:
@@ -254,6 +256,8 @@ class DocumentProcessor:
                 return
 
             # Update total chunks
+            logger.info("Document %d: updating DB with %d chunks...",
+                        document_id, len(chunks))
             async with self._session_factory() as session:
                 doc_repo = DocumentRepository(session)
                 await doc_repo.update_status(
@@ -262,14 +266,24 @@ class DocumentProcessor:
                     extracted_text_preview=preview,
                 )
                 await session.commit()
+            logger.info("Document %d: DB updated OK", document_id)
 
             logger.info("Document %d: %d pages, %d chunks",
                         document_id, parsed.page_count, len(chunks))
 
             # 3. Embed each chunk (rate-limited via bg_embedding_service)
+            logger.info("Document %d: starting embedding of %d chunks",
+                        document_id, len(chunks))
             for chunk in chunks:
                 try:
-                    embedding = await self.bg_embedding.embed(chunk.text)
+                    logger.info("Document %d: embedding chunk %d/%d (%d tokens)...",
+                                 document_id, chunk.index + 1, len(chunks), chunk.token_count)
+                    embedding = await asyncio.wait_for(
+                        self.bg_embedding.embed(chunk.text),
+                        timeout=120.0,
+                    )
+                    logger.info("Document %d: chunk %d embedded OK (dim=%d)",
+                                 document_id, chunk.index + 1, len(embedding))
 
                     async with self._session_factory() as session:
                         doc_repo = DocumentRepository(session)
@@ -283,11 +297,17 @@ class DocumentProcessor:
                         await doc_repo.increment_processed(document_id)
                         await session.commit()
 
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Document %d: embedding chunk %d timed out after 120s",
+                        document_id, chunk.index + 1,
+                    )
                 except Exception:
                     logger.exception(
                         "Failed to embed chunk %d of document %d",
                         chunk.index, document_id,
                     )
+            logger.info("Document %d: all chunks embedded", document_id)
 
             # 4. Extract facts from document (in batches)
             await self._extract_document_facts(
@@ -359,13 +379,18 @@ class DocumentProcessor:
             )
 
             try:
-                llm_response = await self.bg_llm_router.chat(
-                    task="document_fact_extraction",
-                    messages=[
-                        {"role": "system", "content": "You are a precise fact extraction system. Respond only in valid JSON."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
+                logger.info("Document %d: extracting facts from chunks %d-%d",
+                            document_id, i + 1, i + len(batch))
+                llm_response = await asyncio.wait_for(
+                    self.bg_llm_router.chat(
+                        task="document_fact_extraction",
+                        messages=[
+                            {"role": "system", "content": "You are a precise fact extraction system. Respond only in valid JSON."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.1,
+                    ),
+                    timeout=120.0,
                 )
 
                 facts_data = self._parse_facts_json(llm_response.content)
