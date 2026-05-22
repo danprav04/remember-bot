@@ -368,10 +368,40 @@ class ContextAssembler:
         query_text: str,
     ) -> list[dict]:
         """Extract potential document name references from the query and
-        search by filename.  Looks for patterns like dates, underscores,
-        and filename-like tokens."""
+        search by filename.
+
+        Strategy:
+        1. First, fetch all the user's document filenames and check if
+           any filename (without extension) appears in the query. This
+           works for any language (Hebrew, English, etc.).
+        2. Then, also look for filename-like patterns (dates, underscores,
+           extensions, quoted strings) as a fallback.
+        """
         hints: list[str] = []
 
+        # --- Strategy 1: Match against actual document filenames ---
+        # This catches "מה יש בסילבוס" matching "סילבוס.pdf"
+        try:
+            user_docs = await doc_repo.get_user_documents(user_id, limit=50)
+            query_lower = query_text.lower()
+            for doc in user_docs:
+                if doc.status != "completed":
+                    continue
+                fname = doc.filename
+                # Check filename with and without extension
+                name_no_ext = fname.rsplit(".", 1)[0] if "." in fname else fname
+                # Check if the filename (or name without extension) appears
+                # in the query text (case-insensitive)
+                if name_no_ext.lower() in query_lower or fname.lower() in query_lower:
+                    hints.append(name_no_ext)
+                    logger.info(
+                        "Filename match: query contains '%s' (from document '%s')",
+                        name_no_ext, fname,
+                    )
+        except Exception:
+            logger.exception("Failed to check user document filenames")
+
+        # --- Strategy 2: Pattern-based hints (fallback) ---
         # Match date-like patterns: 22_05, 22.05, 2026, etc.
         date_patterns = re.findall(r'\d{1,4}[_.\-/]\d{1,4}(?:[_.\-/]\d{2,4})?', query_text)
         hints.extend(date_patterns)

@@ -31,7 +31,7 @@ REDIS_QUEUE_KEY = "remember_bot:document_queue"
 
 # Prompt for extracting facts from document chunks
 DOCUMENT_FACT_PROMPT = """\
-You are a memory extraction system. Analyze the following document excerpt(s) and extract any information that would be valuable to remember about the user's document for future conversations.
+You are a memory extraction system. Analyze the following document excerpt(s) and extract ONLY high-level, actionable facts that would help recall what this document is about in future conversations.
 
 The document is titled: "{filename}"
 
@@ -56,15 +56,26 @@ If nothing in these excerpts is worth remembering as standalone facts, respond w
 {{"facts": []}}
 
 CRITICAL RULES — you MUST follow these:
-1. PRESERVE the document's original wording exactly. Do NOT rephrase, summarize, or reword the content.
-2. If the document contains a list, store EACH item as a SEPARATE fact. Do NOT merge or combine items.
-3. NEVER fabricate, infer, or add information that is not explicitly in the document.
-4. NEVER mix information from different sections, lists, or tables.
-5. Keep the original structure, ordering, numbers, and terminology intact.
+1. Extract ONLY high-level summary facts: what the document IS, what it's ABOUT, key dates, names, amounts, deadlines, requirements.
+2. Each fact MUST be a complete, self-contained sentence of at least 30 characters. Single words, short phrases, topic names, or section headers are NOT facts.
+3. Do NOT decompose structured content (syllabi, lists, tables of contents) into individual items. The full document is already stored — facts should capture the BIG PICTURE, not every line item.
+4. Maximum 5 facts per batch. Focus on quality over quantity.
+5. NEVER fabricate, infer, or add information that is not explicitly in the document.
 6. Always include the source document name in each fact for traceability.
+
+BAD examples (do NOT produce facts like these):
+- "שימושים (סילבוס.pdf)" — too short, meaningless without context
+- "כלל השרשרת (סילבוס.pdf)" — just a topic name, not a fact
+- "אינטגרציה בחלקים" — a single term, not a fact
+
+GOOD examples:
+- "The syllabus for Calculus 1 (סילבוס.pdf) covers: sequences, limits, continuity, derivatives, integrals, and series."
+- "The binding material for the exam is what is taught in the lectures (סילבוס.pdf)."
+- "Reference textbooks listed in סילבוס.pdf: Calculus 1 by Ben-Zion Kon, Calculus by Alex Kuperman, Calculus by Meizler."
 
 IMPORTANT: Respond ONLY with valid JSON, no markdown or extra text.\
 """
+
 
 
 class DocumentProcessor:
