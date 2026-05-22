@@ -51,6 +51,7 @@ class DocumentRepository:
         error_message: str | None = None,
         total_chunks: int | None = None,
         extracted_text_preview: str | None = None,
+        extracted_full_text: str | None = None,
     ) -> None:
         """Update a document's processing status."""
         values: dict = {"status": status}
@@ -60,6 +61,8 @@ class DocumentRepository:
             values["total_chunks"] = total_chunks
         if extracted_text_preview is not None:
             values["extracted_text_preview"] = extracted_text_preview
+        if extracted_full_text is not None:
+            values["extracted_full_text"] = extracted_full_text
         if status == "completed":
             values["completed_at"] = datetime.now(timezone.utc)
 
@@ -185,6 +188,78 @@ class DocumentRepository:
         stmt = select(Document).where(Document.status == "pending")
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    # ------------------------------------------------------------------
+    # Full document retrieval
+    # ------------------------------------------------------------------
+
+    async def get_all_chunks_for_document(
+        self,
+        document_id: int,
+        user_id: int,
+    ) -> list[dict]:
+        """
+        Retrieve ALL chunks for a specific document, ordered by chunk_index.
+        Used for full document recall.
+
+        Returns list of dicts with keys: id, document_id, chunk_index,
+        chunk_text, filename
+        """
+        stmt = text("""
+            SELECT dc.id, dc.document_id, dc.chunk_index, dc.chunk_text,
+                   d.filename
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE dc.document_id = :document_id
+              AND dc.user_id = :user_id
+              AND d.status = 'completed'
+            ORDER BY dc.chunk_index
+        """)
+
+        result = await self.session.execute(
+            stmt,
+            {"document_id": document_id, "user_id": user_id},
+        )
+
+        rows = result.fetchall()
+        return [
+            {
+                "id": row.id,
+                "document_id": row.document_id,
+                "chunk_index": row.chunk_index,
+                "chunk_text": row.chunk_text,
+                "filename": row.filename,
+                "distance": 0.0,
+            }
+            for row in rows
+        ]
+
+    async def get_document_full_text(
+        self,
+        document_id: int,
+        user_id: int,
+    ) -> str | None:
+        """
+        Get the full extracted text for a document.
+        First tries the stored full text, then falls back to
+        reconstructing from chunks.
+        """
+        # Try stored full text first
+        stmt = select(Document.extracted_full_text).where(
+            Document.id == document_id,
+            Document.user_id == user_id,
+        )
+        result = await self.session.execute(stmt)
+        full_text = result.scalar_one_or_none()
+        if full_text:
+            return full_text
+
+        # Fallback: reconstruct from chunks
+        chunks = await self.get_all_chunks_for_document(document_id, user_id)
+        if chunks:
+            return "\n".join(c["chunk_text"] for c in chunks)
+
+        return None
 
     # ------------------------------------------------------------------
     # Filename-based search

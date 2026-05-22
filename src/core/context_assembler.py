@@ -3,17 +3,22 @@ Context Assembler — builds the LLM prompt from all memory tiers.
 
 Uses a budget-based approach to fit within model token limits:
   ~10% System prompt (including semantic facts)
-  ~20% Document chunks (vector-similar content from uploaded docs)
-  ~20% Episodic recall (vector-similar past messages + summaries)
-  ~50% Working memory (recent messages)
+  ~40% Document chunks (grouped by source, positioned near the question)
+  ~15% Episodic recall (vector-similar past messages + summaries)
+  ~35% Working memory (recent messages)
 
-The assembler dynamically redistributes unused budget from empty tiers
-to tiers that have content, and truncates when over budget.
+Document chunks are placed AFTER working memory (right before the user's
+current message) so the LLM pays maximum attention to them when answering
+document-related questions.
+
+When a specific document is identified by filename, ALL of its chunks are
+retrieved for full document recall.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +62,13 @@ class ContextAssembler:
         """
         Build the complete messages list for the LLM, incorporating
         all memory tiers within token budget.
+
+        Prompt order (optimized for LLM attention):
+          1. System prompt (with facts)
+          2. Episodic recall
+          3. Working memory (conversation history, EXCLUDING the current message)
+          4. Document context (right before the question — maximum attention)
+          5. Current user message (last)
         """
         max_tokens = self.config.memory.max_context_tokens
         msg_repo = MessageRepository(session)
@@ -86,6 +98,8 @@ class ContextAssembler:
         )
 
         # Document memory: similar chunks from uploaded documents
+        # This now includes focused full-document retrieval when a
+        # specific document is referenced by name.
         document_chunks = await self._retrieve_document_context(
             session=session,
             user_id=user_id,
@@ -122,12 +136,12 @@ class ContextAssembler:
         has_episodic = bool(episodic_chunks)
         has_working = bool(recent_messages)
 
-        # Base allocations: 25% docs, 25% episodic, 50% working
-        # Redistribute empty tier budgets proportionally
+        # Budget allocations: when docs are present, give them 40%
+        # to allow full document recall. Otherwise redistribute.
         tiers = {
-            "docs": (has_docs, 0.25),
-            "episodic": (has_episodic, 0.25),
-            "working": (has_working, 0.50),
+            "docs": (has_docs, 0.40),
+            "episodic": (has_episodic, 0.15),
+            "working": (has_working, 0.45),
         }
 
         active_tiers = {k: v[1] for k, v in tiers.items() if v[0]}
@@ -148,26 +162,7 @@ class ContextAssembler:
             {"role": "system", "content": system_prompt}
         ]
 
-        # --- 5. Document chunks (trimmed to budget) ---
-        if document_chunks:
-            trimmed_docs = self._trim_doc_chunks(document_chunks, doc_budget)
-            if trimmed_docs:
-                doc_text = "Relevant content from the user's uploaded documents:\n"
-                for dc in trimmed_docs:
-                    doc_text += f"  [From: {dc['filename']}] {dc['chunk_text']}\n"
-                messages.append({
-                    "role": "system",
-                    "content": doc_text,
-                })
-                doc_used = count_tokens(doc_text) + 4
-                # Reclaim unused budget
-                working_budget += (doc_budget - doc_used)
-            else:
-                working_budget += doc_budget
-        else:
-            pass  # budget already redistributed above
-
-        # --- 6. Episodic recall (trimmed to budget) ---
+        # --- 5. Episodic recall (placed first, before working memory) ---
         if episodic_chunks:
             # Filter out chunks already in working memory
             recent_texts = {msg.content for msg in recent_messages}
@@ -193,7 +188,7 @@ class ContextAssembler:
             else:
                 working_budget += episodic_budget
 
-        # --- 7. Working memory (trimmed to budget, keep most recent) ---
+        # --- 6. Working memory (conversation history) ---
         working_messages = []
         tokens_used = 0
         # Iterate from newest to oldest so we keep the most recent messages
@@ -208,6 +203,23 @@ class ContextAssembler:
             tokens_used += msg_tokens
         working_messages.reverse()  # Back to chronological order
         messages.extend(working_messages)
+
+        # --- 7. Document chunks (RIGHT BEFORE the user's question) ---
+        # This positioning ensures maximum LLM attention on document content
+        # when answering document-related queries.
+        if document_chunks:
+            trimmed_docs = self._trim_doc_chunks(document_chunks, doc_budget)
+            if trimmed_docs:
+                doc_text = self._format_document_context(trimmed_docs)
+                messages.append({
+                    "role": "system",
+                    "content": doc_text,
+                })
+                doc_used = count_tokens(doc_text) + 4
+                # Note: unused doc budget is not redistributed since
+                # working memory was already built above.
+            # If no docs fit, budget is simply unused
+        # (budget already redistributed above if no docs at all)
 
         # --- 8. Log final context stats ---
         total_tokens = system_tokens + count_tokens(
@@ -238,6 +250,41 @@ class ContextAssembler:
         return messages
 
     # ------------------------------------------------------------------
+    # Document context formatting
+    # ------------------------------------------------------------------
+
+    def _format_document_context(self, chunks: list[dict]) -> str:
+        """Format document chunks grouped by source document with clear
+        headers. This makes it obvious to the LLM which document each
+        chunk belongs to."""
+        # Group chunks by document
+        docs: dict[str, list[dict]] = {}
+        for chunk in chunks:
+            fname = chunk.get("filename", "unknown")
+            if fname not in docs:
+                docs[fname] = []
+            docs[fname].append(chunk)
+
+        lines = [
+            "RETRIEVED DOCUMENT CONTENT — use this as your PRIMARY source "
+            "when answering questions about these documents. If the user asks "
+            "about a document and its content is below, answer FROM this content. "
+            "If the user's question could refer to multiple documents listed here, "
+            "briefly list the matching documents and ask which one they mean.\n"
+        ]
+
+        for fname, file_chunks in docs.items():
+            # Sort by chunk_index if available
+            file_chunks.sort(key=lambda c: c.get("chunk_index", 0))
+            lines.append(f"📄 DOCUMENT: {fname}")
+            lines.append("-" * 40)
+            for fc in file_chunks:
+                lines.append(fc["chunk_text"])
+            lines.append("")  # blank line between documents
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Document retrieval
     # ------------------------------------------------------------------
 
@@ -249,12 +296,49 @@ class ContextAssembler:
         top_k: int = 5,
     ) -> list[dict]:
         """Retrieve relevant document chunks via vector similarity search,
-        with a filename-based fallback for queries that reference documents
-        by name."""
+        with focused full-document retrieval when a specific document is
+        referenced by name.
+
+        Strategy:
+        1. Try filename-based matching first — if the user references a
+           specific document, retrieve ALL chunks from that document.
+        2. Also run vector similarity search for content-based matches.
+        3. Merge and deduplicate results, prioritizing filename matches.
+        """
         doc_repo = DocumentRepository(session)
         results: list[dict] = []
+        filename_doc_ids: set[int] = set()
 
-        # 1. Vector similarity search (if embeddings available)
+        # 1. Filename-based focused retrieval (highest priority)
+        # If the user references a specific document by name, retrieve
+        # ALL chunks from that document for full recall.
+        filename_results = await self._search_by_filename_hints(
+            doc_repo, user_id, query_text
+        )
+        if filename_results:
+            # Identify which documents were matched by filename
+            filename_doc_ids = {r["document_id"] for r in filename_results}
+
+            # For each matched document, retrieve ALL chunks (full recall)
+            for doc_id in filename_doc_ids:
+                all_chunks = await doc_repo.get_all_chunks_for_document(
+                    document_id=doc_id,
+                    user_id=user_id,
+                )
+                # Add all chunks, deduplicating by ID
+                existing_ids = {r["id"] for r in results}
+                for chunk in all_chunks:
+                    if chunk["id"] not in existing_ids:
+                        results.append(chunk)
+                        existing_ids.add(chunk["id"])
+
+            logger.info(
+                "Filename match: retrieved ALL chunks from %d document(s): %s",
+                len(filename_doc_ids),
+                ", ".join(r["filename"] for r in filename_results[:3]),
+            )
+
+        # 2. Vector similarity search (supplements filename results)
         if self.episodic.embedding_service.available:
             try:
                 query_embedding = await self.episodic.embedding_service.embed(query_text)
@@ -264,21 +348,16 @@ class ContextAssembler:
                     top_k=top_k,
                 )
                 # Relaxed threshold: cosine distance range is 0–2, allow up to 1.2
-                results = [r for r in vector_results if r["distance"] < 1.2]
+                filtered = [r for r in vector_results if r["distance"] < 1.2]
+
+                # Add vector results that aren't already from filename matches
+                existing_ids = {r["id"] for r in results}
+                for r in filtered:
+                    if r["id"] not in existing_ids:
+                        results.append(r)
+                        existing_ids.add(r["id"])
             except Exception:
                 logger.exception("Document chunk vector retrieval failed")
-
-        # 2. Filename-based fallback: extract potential document name
-        #    references from the query and search by filename.
-        filename_results = await self._search_by_filename_hints(
-            doc_repo, user_id, query_text
-        )
-        if filename_results:
-            # Deduplicate: don't add chunks already found by vector search
-            existing_ids = {r["id"] for r in results}
-            for fr in filename_results:
-                if fr["id"] not in existing_ids:
-                    results.append(fr)
 
         return results
 
@@ -291,8 +370,6 @@ class ContextAssembler:
         """Extract potential document name references from the query and
         search by filename.  Looks for patterns like dates, underscores,
         and filename-like tokens."""
-        import re
-
         hints: list[str] = []
 
         # Match date-like patterns: 22_05, 22.05, 2026, etc.
@@ -355,14 +432,22 @@ class ContextAssembler:
         return result
 
     def _trim_doc_chunks(self, chunks: list[dict], budget_tokens: int) -> list[dict]:
-        """Keep as many document chunks as fit within the token budget."""
+        """Keep as many document chunks as fit within the token budget.
+        Prioritizes chunks from filename-matched documents (distance=0.0)."""
+        # Sort: filename matches first (distance=0), then by distance
+        sorted_chunks = sorted(chunks, key=lambda c: c.get("distance", 999))
+
         result = []
         tokens_used = 0
-        overhead = count_tokens("Relevant content from the user's uploaded documents:\n") + 4
+        # Account for the header text
+        overhead = count_tokens(
+            "RETRIEVED DOCUMENT CONTENT — use this as your PRIMARY source "
+            "when answering questions about these documents.\n"
+        ) + 4
         tokens_used += overhead
 
-        for chunk in chunks:
-            text = f"  [From: {chunk['filename']}] {chunk['chunk_text']}\n"
+        for chunk in sorted_chunks:
+            text = f"  [{chunk.get('filename', 'unknown')}] {chunk['chunk_text']}\n"
             chunk_tokens = count_tokens(text)
             if tokens_used + chunk_tokens > budget_tokens:
                 break

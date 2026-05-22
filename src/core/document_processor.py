@@ -245,6 +245,7 @@ class DocumentProcessor:
             # 1. Parse the file
             parsed = await asyncio.to_thread(parse_file, file_bytes, filename)
             preview = parsed.text[:500] if parsed.text else ""
+            full_text = parsed.text or ""
 
             # 2. Chunk the text
             logger.info("Document %d: parsed OK, chunking %d chars...",
@@ -257,6 +258,7 @@ class DocumentProcessor:
                         document_id, "completed",
                         total_chunks=0,
                         extracted_text_preview=preview,
+                        extracted_full_text=full_text,
                     )
                     await session.commit()
                 await self._notify(platform, chat_id,
@@ -272,6 +274,7 @@ class DocumentProcessor:
                     document_id, "processing",
                     total_chunks=len(chunks),
                     extracted_text_preview=preview,
+                    extracted_full_text=full_text,
                 )
                 await session.commit()
             logger.info("Document %d: DB updated OK", document_id)

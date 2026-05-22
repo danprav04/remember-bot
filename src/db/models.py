@@ -165,6 +165,7 @@ class Document(Base):
     processed_chunks = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     extracted_text_preview = Column(Text, nullable=True)  # first ~500 chars
+    extracted_full_text = Column(Text, nullable=True)     # complete parsed text for full recall
     platform = Column(String(10), nullable=True)          # which platform the upload came from
     platform_chat_id = Column(String(64), nullable=True)  # chat to send notifications to
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
