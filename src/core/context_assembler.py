@@ -249,11 +249,11 @@ class ContextAssembler:
         top_k: int = 3,
     ) -> list[dict]:
         """Retrieve relevant document chunks via vector similarity search."""
-        if not self.episodic._embedding_service.available:
+        if not self.episodic.embedding_service.available:
             return []
 
         try:
-            query_embedding = await self.episodic._embedding_service.embed(query_text)
+            query_embedding = await self.episodic.embedding_service.embed(query_text)
             doc_repo = DocumentRepository(session)
             results = await doc_repo.search_chunks_by_similarity(
                 user_id=user_id,
