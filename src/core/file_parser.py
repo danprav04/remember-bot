@@ -87,16 +87,59 @@ def parse_file(file_bytes: bytes, filename: str) -> ParsedDocument:
         )
 
     if ext == ".pdf":
-        return _parse_pdf(file_bytes, filename)
-    if ext == ".docx":
-        return _parse_docx(file_bytes, filename)
-    if ext == ".doc":
+        result = _parse_pdf(file_bytes, filename)
+    elif ext == ".docx":
+        result = _parse_docx(file_bytes, filename)
+    elif ext == ".doc":
         raise ValueError(
             "The legacy .doc format (binary Word) is not supported. "
             "Please convert the file to .docx and re-upload."
         )
-    # .md, .txt, .text
-    return _parse_text(file_bytes, filename)
+    else:
+        # .md, .txt, .text
+        result = _parse_text(file_bytes, filename)
+
+    # Sanitize text — remove null bytes and control chars that break PostgreSQL
+    result.text = _sanitize_text(result.text)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Text sanitisation
+# ---------------------------------------------------------------------------
+
+def _sanitize_text(text: str) -> str:
+    """Remove null bytes and non-printable control characters.
+
+    PostgreSQL rejects strings containing ``\\x00``.  PDF extractors
+    often emit null bytes, form-feed (``\\x0c``), and other C0/C1
+    control codes when processing scanned or math-heavy documents.
+
+    We keep common whitespace (tab ``\\t``, newline ``\\n``,
+    carriage-return ``\\r``) and strip everything else below U+0020.
+    """
+    # Fast path
+    if "\x00" not in text and all(ch >= " " or ch in "\t\n\r" for ch in text[:200]):
+        return text
+
+    cleaned = []
+    for ch in text:
+        if ch == "\x00":
+            continue  # always strip null
+        cp = ord(ch)
+        # Keep tab, newline, carriage-return; drop other C0 controls (0x01-0x08, 0x0B-0x0C, 0x0E-0x1F)
+        if cp < 0x20 and ch not in ("\t", "\n", "\r"):
+            cleaned.append(" ")  # replace with space to preserve word boundaries
+            continue
+        cleaned.append(ch)
+
+    result = "".join(cleaned)
+    if len(result) < len(text):
+        logger.info(
+            "Sanitized text: removed %d problematic characters",
+            len(text) - len(result),
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
