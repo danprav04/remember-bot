@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
+from sqlalchemy import text as sa_text
 
 from src.config import get_config
 from src.core.context_assembler import ContextAssembler
@@ -65,6 +66,15 @@ async def lifespan(app: FastAPI):
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Lightweight migrations for new columns on existing tables.
+        # create_all only creates NEW tables — it won't ALTER existing ones.
+        await conn.execute(
+            sa_text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+                "extracted_full_text TEXT"
+            )
+        )
     logger.info("Database tables ensured")
 
     # ------------------------------------------------------------------

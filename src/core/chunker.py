@@ -178,22 +178,49 @@ class TextChunker:
     def _split_sentences(text: str) -> list[str]:
         """Split *text* into sentences, preserving the terminating
         punctuation on each sentence and stripping extra whitespace.
+
+        Strategy:
+        1. Split on newlines first — this is the primary boundary for
+           structured documents (syllabi, lists, etc.) and works for
+           all languages including RTL (Hebrew, Arabic).
+        2. For each resulting paragraph, apply the sentence-boundary
+           regex to split further if needed.
+        3. This ensures we never merge unrelated lines into a single
+           giant "sentence" just because they lack English-style
+           sentence-ending punctuation.
         """
-        # Use the regex to find split positions
         parts: list[str] = []
-        last_end = 0
 
-        for match in _SENTENCE_BOUNDARY.finditer(text):
-            end = match.end()
-            sentence = text[last_end:end].strip()
-            if sentence:
-                parts.append(sentence)
-            last_end = end
+        # First split on newlines — this handles structured documents,
+        # lists, and RTL text that uses line breaks as separators.
+        lines = text.split("\n")
 
-        # Trailing text after the last sentence boundary
-        tail = text[last_end:].strip()
-        if tail:
-            parts.append(tail)
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Try to split this line further using sentence boundaries
+            sub_parts: list[str] = []
+            last_end = 0
+
+            for match in _SENTENCE_BOUNDARY.finditer(stripped):
+                end = match.end()
+                sentence = stripped[last_end:end].strip()
+                if sentence:
+                    sub_parts.append(sentence)
+                last_end = end
+
+            # Trailing text after the last sentence boundary
+            tail = stripped[last_end:].strip()
+            if tail:
+                sub_parts.append(tail)
+
+            # If no sentence boundaries were found, the whole line is one unit
+            if not sub_parts:
+                sub_parts = [stripped]
+
+            parts.extend(sub_parts)
 
         return parts
 
