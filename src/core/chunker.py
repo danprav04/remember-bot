@@ -122,6 +122,8 @@ class TextChunker:
         idx = 0  # current sentence cursor
 
         while idx < len(sentences):
+            start_idx = idx  # remember where this chunk started
+
             # --- Build one chunk ---
             chunk_sentences: list[str] = []
             chunk_token_total = 0
@@ -149,9 +151,14 @@ class TextChunker:
 
             # --- Compute overlap for the next chunk ---
             if idx < len(sentences) and self.overlap > 0:
-                idx = self._rewind_for_overlap(
+                rewound_idx = self._rewind_for_overlap(
                     sentences, sentence_tokens, idx, chunk_sentences,
                 )
+                # CRITICAL: never rewind to or before the start of the
+                # current chunk — that would cause an infinite loop.
+                if rewound_idx > start_idx:
+                    idx = rewound_idx
+                # else: no rewind, idx stays at its current position
 
         logger.info(
             "Chunked text into %d chunks (chunk_size=%d, overlap=%d, "
