@@ -1,6 +1,6 @@
 """
 Embedding service — generates text embeddings via AI Studio (Gemini Embedding 2).
-Placeholder for Phase 2; provides the interface now.
+Supports optional rate limiting for API quota management.
 """
 
 from __future__ import annotations
@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     """Generate text embeddings using the configured embedding provider."""
 
-    def __init__(self, config: AppConfig):
-        task_config = config.llm.tasks.get("embeddings")
+    def __init__(self, config: AppConfig, task_name: str = "embeddings", rate_limiter=None):
+        self._rate_limiter = rate_limiter
+
+        task_config = config.llm.tasks.get(task_name)
         if task_config is None:
-            logger.warning("No 'embeddings' task configured — embedding service disabled")
+            logger.warning("No '%s' task configured — embedding service disabled", task_name)
             self._client = None
             self._model = ""
             return
@@ -37,7 +39,10 @@ class EmbeddingService:
             api_key=provider_config.api_key,
         )
         self._model = task_config.model
-        logger.info("Embedding service ready: provider=%s model=%s", task_config.provider, self._model)
+        logger.info(
+            "Embedding service ready: provider=%s model=%s task=%s rate_limited=%s",
+            task_config.provider, self._model, task_name, rate_limiter is not None,
+        )
 
     @property
     def available(self) -> bool:
@@ -47,6 +52,12 @@ class EmbeddingService:
         """Generate an embedding vector for a single text."""
         if not self._client:
             raise RuntimeError("Embedding service is not configured")
+
+        # Rough token estimate for rate limiting (1 token ≈ 4 chars)
+        estimated_tokens = max(1, len(text) // 4)
+
+        if self._rate_limiter:
+            await self._rate_limiter.acquire(estimated_tokens)
 
         response = await self._client.embeddings.create(
             model=self._model,
@@ -58,6 +69,12 @@ class EmbeddingService:
         """Generate embeddings for multiple texts in one call."""
         if not self._client:
             raise RuntimeError("Embedding service is not configured")
+
+        # Rate-limit the batch as a single request with total token count
+        total_tokens = sum(max(1, len(t) // 4) for t in texts)
+
+        if self._rate_limiter:
+            await self._rate_limiter.acquire(total_tokens)
 
         response = await self._client.embeddings.create(
             model=self._model,

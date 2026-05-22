@@ -16,6 +16,7 @@ from src.config import AppConfig
 from src.core.context_assembler import ContextAssembler
 from src.core.fact_extractor import FactExtractor
 from src.db.engine import get_session_factory
+from src.db.repositories.documents import DocumentRepository
 from src.db.repositories.messages import MessageRepository
 from src.db.repositories.users import UserRepository
 from src.gateway.base import IncomingMessage
@@ -41,6 +42,7 @@ class Orchestrator:
         fact_extractor: FactExtractor,
         episodic_memory: EpisodicMemory,
         summarizer: ConversationSummarizer,
+        document_processor=None,
     ):
         self.config = config
         self.llm_router = llm_router
@@ -48,6 +50,7 @@ class Orchestrator:
         self.fact_extractor = fact_extractor
         self.episodic_memory = episodic_memory
         self.summarizer = summarizer
+        self.document_processor = document_processor
         self._session_factory = get_session_factory()
 
         # Memory decay — runs periodically based on message count
@@ -71,6 +74,10 @@ class Orchestrator:
         6. Kick off background tasks (embedding + fact extraction + summarization)
         7. Return response text
         """
+        # --- Handle document uploads ---
+        if incoming.media_type == "document" and incoming.document_bytes:
+            return await self._handle_document_upload(incoming)
+
         # --- Pre-processing: Transcribe Voice Messages ---
         if incoming.media_type == "voice" and incoming.media_base64:
             try:
@@ -182,6 +189,78 @@ class Orchestrator:
                 await session.rollback()
                 logger.exception("Error in orchestrator pipeline")
                 raise
+
+    async def _handle_document_upload(self, incoming: IncomingMessage) -> str:
+        """Handle an uploaded document: create DB record and enqueue for processing."""
+        if self.document_processor is None:
+            return "❌ Document processing is not available right now."
+
+        filename = incoming.document_filename or "unknown_file"
+        file_bytes = incoming.document_bytes
+        file_size = len(file_bytes)
+
+        # Check file size limit
+        max_size = self.config.documents.max_file_size_mb * 1024 * 1024
+        if file_size > max_size:
+            return (
+                f"❌ File too large ({file_size / 1024 / 1024:.1f} MB). "
+                f"Maximum allowed size is {self.config.documents.max_file_size_mb} MB."
+            )
+
+        # Determine file type from extension
+        import os
+        ext = os.path.splitext(filename)[1].lower()
+        ext_to_type = {
+            ".pdf": "pdf",
+            ".docx": "docx",
+            ".doc": "doc",
+            ".md": "md",
+            ".txt": "txt",
+            ".text": "text",
+        }
+        file_type = ext_to_type.get(ext)
+        if not file_type:
+            return (
+                f"❌ Unsupported file type: `{ext}`. "
+                f"I can process PDF, DOCX, Markdown (.md), and text (.txt) files."
+            )
+
+        # Resolve user
+        async with self._session_factory() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_or_create(
+                platform=incoming.platform,
+                platform_user_id=incoming.platform_user_id,
+                display_name=incoming.display_name,
+            )
+
+            # Create document record
+            doc_repo = DocumentRepository(session)
+            doc = await doc_repo.create_document(
+                user_id=user.id,
+                filename=filename,
+                file_type=file_type,
+                file_size_bytes=file_size,
+                platform=incoming.platform,
+                platform_chat_id=incoming.platform_chat_id,
+            )
+            await session.commit()
+            document_id = doc.id
+
+        # Enqueue for background processing
+        await self.document_processor.enqueue(document_id, file_bytes)
+
+        size_str = (
+            f"{file_size / 1024:.1f} KB" if file_size < 1024 * 1024
+            else f"{file_size / 1024 / 1024:.1f} MB"
+        )
+        return (
+            f"📄 Got your file **{filename}** ({size_str})!\n\n"
+            f"Processing it in the background — I'll extract the text, "
+            f"embed it into my memory, and learn key facts from it.\n\n"
+            f"⏳ I'll notify you when processing is complete. "
+            f"In the meantime, feel free to keep chatting!"
+        )
 
     async def _handle_media_message(
         self,

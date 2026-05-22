@@ -67,8 +67,12 @@ class Settings(BaseSettings):
 
     # AI provider API keys
     aistudio_api_key: str = Field(default="", description="Google AI Studio API key")
+    aistudio_bg_api_key: str = Field(default="", description="Google AI Studio API key for background processing")
     openrouter_api_key: str = Field(default="", description="OpenRouter API key")
     aihubmix_api_key: str = Field(default="", description="AIhubmix API key")
+
+    # Redis
+    redis_url: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -160,6 +164,36 @@ class DecayConfig:
         self.interval_messages: int = decay.get("interval_messages", 50)
 
 
+class RateLimitConfig:
+    """Rate limit settings per API from config.yaml."""
+
+    def __init__(self, data: dict[str, Any]):
+        rl = data.get("rate_limits", {})
+        llm_rl = rl.get("llm", {})
+        emb_rl = rl.get("embeddings", {})
+
+        self.llm_rpm: int = llm_rl.get("rpm", 15)
+        self.llm_tpm: int = llm_rl.get("tpm", 250_000)
+        self.llm_rpd: int = llm_rl.get("rpd", 500)
+
+        self.embedding_rpm: int = emb_rl.get("rpm", 100)
+        self.embedding_tpm: int = emb_rl.get("tpm", 30_000)
+        self.embedding_rpd: int = emb_rl.get("rpd", 1_000)
+
+
+class DocumentConfig:
+    """Document processing settings from config.yaml."""
+
+    def __init__(self, data: dict[str, Any]):
+        doc = data.get("documents", {})
+        self.enabled: bool = doc.get("enabled", True)
+        self.max_file_size_mb: int = doc.get("max_file_size_mb", 20)
+        self.chunk_size_tokens: int = doc.get("chunk_size_tokens", 500)
+        self.chunk_overlap_tokens: int = doc.get("chunk_overlap_tokens", 50)
+        self.fact_extraction_batch_size: int = doc.get("fact_extraction_batch_size", 3)
+        self.max_concurrent_documents: int = doc.get("max_concurrent_documents", 2)
+
+
 class AppConfig:
     """Top-level application configuration combining env vars and config.yaml."""
 
@@ -170,6 +204,8 @@ class AppConfig:
         self.memory = MemoryConfig(yaml_data)
         self.bot = BotConfig(yaml_data)
         self.decay = DecayConfig(yaml_data)
+        self.rate_limits = RateLimitConfig(yaml_data)
+        self.documents = DocumentConfig(yaml_data)
 
 
 @lru_cache(maxsize=1)

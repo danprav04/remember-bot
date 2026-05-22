@@ -74,6 +74,7 @@ class TelegramGateway(BaseGateway):
         self._application.add_handler(CommandHandler("stats", self._handle_stats))
         self._application.add_handler(CommandHandler("export", self._handle_export))
         self._application.add_handler(CommandHandler("connect", self._handle_connect))
+        self._application.add_handler(CommandHandler("documents", self._handle_documents))
 
         # Media message handlers
         self._application.add_handler(
@@ -81,6 +82,11 @@ class TelegramGateway(BaseGateway):
         )
         self._application.add_handler(
             MessageHandler(filters.PHOTO, self._handle_photo)
+        )
+
+        # Document handler (PDF, DOCX, TXT, MD files)
+        self._application.add_handler(
+            MessageHandler(filters.Document.ALL, self._handle_document)
         )
 
         # Text message handler (must be last — catches everything else)
@@ -495,6 +501,84 @@ class TelegramGateway(BaseGateway):
             await update.message.reply_text(
                 "❌ Sorry, I couldn't process your photo. Please try again."
             )
+
+    # ------------------------------------------------------------------
+    # Telegram handlers — Document Messages
+    # ------------------------------------------------------------------
+
+    async def _handle_document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle incoming document uploads (PDF, DOCX, TXT, MD)."""
+        if not update.message or not update.message.document:
+            return
+
+        user = update.message.from_user
+        doc = update.message.document
+        filename = doc.file_name or "unknown_file"
+
+        logger.info(
+            "Incoming document from %s (%s): %s (%d bytes)",
+            user.full_name, user.id, filename, doc.file_size or 0,
+        )
+
+        if self._orchestrator is None:
+            await update.message.reply_text("⚠️ Bot is still starting up, please wait...")
+            return
+
+        # Check supported extensions
+        import os
+        ext = os.path.splitext(filename)[1].lower()
+        supported = {".pdf", ".docx", ".doc", ".md", ".txt", ".text"}
+        if ext not in supported:
+            await update.message.reply_text(
+                f"❌ Unsupported file type: `{ext}`.\n"
+                f"I can process: PDF, DOCX, Markdown (.md), and text (.txt) files."
+            )
+            return
+
+        try:
+            # Download the file
+            await update.message.chat.send_action("typing")
+            file_bytes = await self._download_file_base64(doc.file_id)
+
+            incoming = IncomingMessage(
+                platform="telegram",
+                platform_user_id=str(user.id),
+                platform_chat_id=str(update.message.chat_id),
+                display_name=user.full_name,
+                text=update.message.caption or f"[Document: {filename}]",
+                media_type="document",
+                document_bytes=file_bytes,
+                document_filename=filename,
+            )
+
+            response_text = await self._orchestrator.handle_message(incoming)
+            await self._safe_reply(update, response_text)
+
+        except Exception:
+            logger.exception("Error processing document from %s", user.id)
+            await update.message.reply_text(
+                "❌ Sorry, I couldn't process your document. Please try again."
+            )
+
+    # ------------------------------------------------------------------
+    # Telegram handlers — Document Commands
+    # ------------------------------------------------------------------
+
+    async def _handle_documents(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle the /documents command to list uploaded documents."""
+        if self._command_handler is None:
+            await update.message.reply_text("⚠️ Bot is still starting up...")
+            return
+        user = update.message.from_user
+        text = await self._command_handler.handle_documents(
+            platform="telegram",
+            platform_user_id=str(user.id),
+        )
+        await update.message.reply_text(text, parse_mode="HTML")
 
     # ------------------------------------------------------------------
     # Telegram handlers — Text Messages

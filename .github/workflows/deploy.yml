@@ -108,6 +108,7 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           # Bot Secrets
           AISTUDIO_API_KEY: ${{ secrets.AISTUDIO_API_KEY }}
+          AISTUDIO_BG_API_KEY: ${{ secrets.AISTUDIO_BG_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
           WHATSAPP_PHONE_ID: ${{ secrets.WHATSAPP_PHONE_ID }}
@@ -132,6 +133,7 @@ jobs:
 
             # Create the .env file with secrets
             echo "AISTUDIO_API_KEY=${AISTUDIO_API_KEY}" > .env
+            echo "AISTUDIO_BG_API_KEY=${AISTUDIO_BG_API_KEY}" >> .env
             echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
             echo "WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}" >> .env
             echo "WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID}" >> .env

@@ -19,8 +19,9 @@ class LLMRouter:
     fallback in order.
     """
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, rate_limiter=None):
         self.config = config
+        self._rate_limiter = rate_limiter
 
         # Pre-build a provider instance for each configured provider
         self._providers: dict[str, LLMProvider] = {
@@ -35,8 +36,9 @@ class LLMRouter:
             )
 
         logger.info(
-            "LLM Router initialized with providers: %s",
+            "LLM Router initialized with providers: %s (rate_limited=%s)",
             list(self._providers.keys()),
+            rate_limiter is not None,
         )
 
     def _get_provider(self, name: str) -> LLMProvider:
@@ -80,6 +82,12 @@ class LLMRouter:
 
             try:
                 provider = self._get_provider(provider_name)
+
+                # Rate limit: estimate tokens from message content
+                if self._rate_limiter:
+                    estimated_tokens = sum(len(m.get("content", "")) // 4 for m in messages)
+                    await self._rate_limiter.acquire(max(1, estimated_tokens))
+
                 result = await provider.chat(
                     messages=messages,
                     model=model,
@@ -136,6 +144,12 @@ class LLMRouter:
 
             try:
                 provider = self._get_provider(provider_name)
+
+                # Rate limit: estimate tokens from text content
+                if self._rate_limiter:
+                    estimated_tokens = max(1, len(text) // 4)
+                    await self._rate_limiter.acquire(estimated_tokens)
+
                 result = await provider.chat_with_media(
                     text=text,
                     media_base64=media_base64,

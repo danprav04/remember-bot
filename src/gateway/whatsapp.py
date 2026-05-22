@@ -181,6 +181,8 @@ class WhatsAppGateway(BaseGateway):
             await self._handle_image(msg, sender, sender_name)
         elif msg_type in ("audio", "voice"):
             await self._handle_audio(msg, sender, sender_name)
+        elif msg_type == "document":
+            await self._handle_document(msg, sender, sender_name)
         else:
             # Unsupported type — try to get any text
             text = msg.get("text", {}).get("body", "")
@@ -301,6 +303,58 @@ class WhatsAppGateway(BaseGateway):
             await self._send_text(sender, "❌ Sorry, I couldn't process your voice message.")
 
     # ------------------------------------------------------------------
+    # Document
+    # ------------------------------------------------------------------
+
+    async def _handle_document(self, msg: dict, sender: str, sender_name: str) -> None:
+        logger.info("Incoming WhatsApp document from %s (%s)", sender_name, sender)
+
+        if self._orchestrator is None:
+            await self._send_text(sender, "⚠️ Bot is still starting up, please wait...")
+            return
+
+        try:
+            doc_data = msg.get("document", {})
+            media_id = doc_data.get("id", "")
+            filename = doc_data.get("filename", "unknown_file")
+            caption = doc_data.get("caption", "")
+
+            # Check supported extensions
+            import os
+            ext = os.path.splitext(filename)[1].lower()
+            supported = {".pdf", ".docx", ".doc", ".md", ".txt", ".text"}
+            if ext not in supported:
+                await self._send_text(
+                    sender,
+                    f"❌ Unsupported file type: {ext}. "
+                    f"I can process: PDF, DOCX, Markdown (.md), and text (.txt) files."
+                )
+                return
+
+            # Download file bytes
+            file_bytes = await self._download_media(media_id)
+
+            incoming = IncomingMessage(
+                platform="whatsapp",
+                platform_user_id=sender,
+                platform_chat_id=sender,
+                display_name=sender_name,
+                text=caption if caption else f"[Document: {filename}]",
+                media_type="document",
+                document_bytes=file_bytes,
+                document_filename=filename,
+            )
+
+            import asyncio
+            asyncio.create_task(self._send_typing_indicator(sender))
+            response = await self._orchestrator.handle_message(incoming)
+            response = self._markdown_to_whatsapp(response)
+            await self._send_text(sender, response)
+        except Exception:
+            logger.exception("Error processing WhatsApp document from %s", sender)
+            await self._send_text(sender, "❌ Sorry, I couldn't process your document.")
+
+    # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
 
@@ -344,6 +398,10 @@ class WhatsAppGateway(BaseGateway):
             )
         elif command == "link":
             response = await self._command_handler.handle_link(
+                platform="whatsapp", platform_user_id=sender,
+            )
+        elif command == "documents":
+            response = await self._command_handler.handle_documents(
                 platform="whatsapp", platform_user_id=sender,
             )
         else:

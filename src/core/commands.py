@@ -54,6 +54,9 @@ class CommandHandler:
             "/search &lt;query&gt; — Search your facts by keyword\n"
             "/forget &lt;id|all&gt; — Forget a specific fact or all facts\n"
             "\n"
+            "📄 <b>Documents</b>\n"
+            "/documents — List your uploaded documents\n"
+            "\n"
             "⚙️ <b>Info</b>\n"
             "/model — Show current AI model configuration\n"
             "/stats — Show your memory statistics\n"
@@ -64,7 +67,7 @@ class CommandHandler:
             "/link — (WhatsApp) Generate a code to link accounts\n"
             "/connect &lt;code&gt; — (Telegram) Link your WhatsApp account\n"
             "\n"
-            "💡 Chat naturally, send voice messages 🎤, or photos 📷\n"
+            "💡 Chat naturally, send voice messages 🎤, photos 📷, or documents 📄\n"
             "I'll remember important details automatically!"
         )
 
@@ -443,6 +446,60 @@ class CommandHandler:
                 f"From now on, anything you tell me on either platform "
                 f"will be remembered across both! 🧠"
             )
+
+    # ------------------------------------------------------------------
+    # Document commands
+    # ------------------------------------------------------------------
+
+    async def handle_documents(
+        self, platform: str, platform_user_id: str
+    ) -> str:
+        """List the user's uploaded documents and their processing status."""
+        from src.db.repositories.documents import DocumentRepository
+
+        async with self._session_factory() as session:
+            user = await self._resolve_user(session, platform, platform_user_id)
+            if user is None:
+                return "No data found. Start chatting and I'll learn about you!"
+
+            doc_repo = DocumentRepository(session)
+            documents = await doc_repo.get_user_documents(user_id=user.id, limit=20)
+
+            if not documents:
+                return (
+                    "📄 No documents uploaded yet.\n\n"
+                    "Send me a PDF, DOCX, Markdown, or text file "
+                    "and I'll process and remember its contents!"
+                )
+
+            status_icons = {
+                "pending": "⏳",
+                "processing": "🔄",
+                "completed": "✅",
+                "failed": "❌",
+            }
+
+            lines = [f"📄 <b>Your uploaded documents</b> ({len(documents)}):\n"]
+            for doc in documents:
+                icon = status_icons.get(doc.status, "❓")
+                size_str = (
+                    f"{doc.file_size_bytes / 1024:.0f} KB"
+                    if doc.file_size_bytes < 1024 * 1024
+                    else f"{doc.file_size_bytes / 1024 / 1024:.1f} MB"
+                )
+                status_extra = ""
+                if doc.status == "completed" and doc.total_chunks:
+                    status_extra = f" ({doc.total_chunks} chunks)"
+                elif doc.status == "processing" and doc.total_chunks:
+                    status_extra = f" ({doc.processed_chunks}/{doc.total_chunks} chunks)"
+                elif doc.status == "failed" and doc.error_message:
+                    status_extra = f" — {doc.error_message[:60]}"
+
+                lines.append(
+                    f"  {icon} <b>{doc.filename}</b> ({size_str}){status_extra}"
+                )
+
+            return "\n".join(lines)
 
     async def _resolve_user(
         self, session: AsyncSession, platform: str, platform_user_id: str

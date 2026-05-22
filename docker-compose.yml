@@ -6,6 +6,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://bot:botpass@db:5432/rememberbot
       - AISTUDIO_API_KEY=${AISTUDIO_API_KEY}
+      - AISTUDIO_BG_API_KEY=${AISTUDIO_BG_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - AIHUBMIX_API_KEY=${AIHUBMIX_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
@@ -15,10 +16,13 @@ services:
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
       - WHATSAPP_APP_ID=${WHATSAPP_APP_ID}
       - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./config.yaml:/app/config.yaml
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -38,5 +42,17 @@ services:
       retries: 5
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  redisdata:

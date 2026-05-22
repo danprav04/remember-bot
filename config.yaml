@@ -8,6 +8,10 @@ llm:
       base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
       api_key_env: "AISTUDIO_API_KEY"
 
+    aistudio_bg:
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key_env: "AISTUDIO_BG_API_KEY"
+
     openrouter:
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: "OPENROUTER_API_KEY"
@@ -58,7 +62,27 @@ llm:
         - provider: "aistudio"
           model: "gemma-4-31b-it"
 
+    # Background tasks — use the dedicated background API key
+    document_fact_extraction:
+      provider: "aistudio_bg"
+      model: "gemini-3.1-flash-lite"
+
+    document_embeddings:
+      provider: "aistudio_bg"
+      model: "gemini-embedding-2"
+
   fallback_enabled: true
+
+# Rate limiting (matches free-tier quotas — per API key)
+rate_limits:
+  llm:
+    rpm: 15
+    tpm: 250000
+    rpd: 500
+  embeddings:
+    rpm: 100
+    tpm: 30000
+    rpd: 1000
 
 # Memory settings
 memory:
@@ -76,6 +100,15 @@ decay:
   min_age_hours: 2400                # Only decay facts older than this
   interval_messages: 250            # Run decay every N messages processed
 
+# Document processing settings
+documents:
+  enabled: true
+  max_file_size_mb: 20              # Maximum upload size
+  chunk_size_tokens: 500            # Tokens per chunk
+  chunk_overlap_tokens: 50          # Overlap between chunks
+  fact_extraction_batch_size: 3     # Chunks per fact extraction call
+  max_concurrent_documents: 2       # Max documents processing simultaneously
+
 # Bot settings
 bot:
   system_prompt: |
@@ -85,6 +118,7 @@ bot:
     - You can store, recall, and summarize information the user shares with you.
     - You can answer general knowledge questions, brainstorm, and assist with text-based tasks.
     - You can converse naturally, keeping track of the current topic and past details.
+    - You can process uploaded documents (PDFs, Word docs, text files) and remember their contents.
 
     ### Your Limitations:
     - You CANNOT perform physical actions, browse the live internet, set alarms, send emails, make phone calls, or interact with other apps.

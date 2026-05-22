@@ -149,3 +149,54 @@ class ConversationSummary(Base):
     __table_args__ = (
         Index("idx_summaries_user", "user_id"),
     )
+
+
+class Document(Base):
+    """Tracks uploaded documents and their background processing status."""
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(20), nullable=False)       # 'pdf', 'docx', 'md', 'txt'
+    file_size_bytes = Column(BigInteger, nullable=False)
+    status = Column(String(20), nullable=False, default="pending")  # pending | processing | completed | failed
+    total_chunks = Column(Integer, nullable=True)         # set after chunking
+    processed_chunks = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    extracted_text_preview = Column(Text, nullable=True)  # first ~500 chars
+    platform = Column(String(10), nullable=True)          # which platform the upload came from
+    platform_chat_id = Column(String(64), nullable=True)  # chat to send notifications to
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User")
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_documents_user", "user_id"),
+        Index("idx_documents_status", "status"),
+    )
+
+
+class DocumentChunk(Base):
+    """Embedded text chunks from uploaded documents, for vector retrieval."""
+    __tablename__ = "document_chunks"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)       # position in the document
+    chunk_text = Column(Text, nullable=False)
+    embedding = Column(Vector(3072), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    document = relationship("Document", back_populates="chunks")
+
+    __table_args__ = (
+        Index("idx_doc_chunks_user", "user_id"),
+        Index("idx_doc_chunks_doc", "document_id"),
+    )
+

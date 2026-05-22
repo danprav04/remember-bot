@@ -17,9 +17,11 @@ class IncomingMessage:
     platform_chat_id: str        # Chat/conversation ID on the platform
     display_name: str | None     # User's display name (if available)
     text: str                    # Message text content (or transcription for voice)
-    media_type: str | None = None   # 'voice' | 'photo' | None
+    media_type: str | None = None   # 'voice' | 'photo' | 'document' | None
     media_base64: str | None = None # Base64-encoded media data
     media_mime: str | None = None   # MIME type e.g. 'audio/ogg', 'image/jpeg'
+    document_bytes: bytes | None = None     # Raw file bytes for document uploads
+    document_filename: str | None = None    # Original filename for document uploads
 
 
 class BaseGateway(ABC):
