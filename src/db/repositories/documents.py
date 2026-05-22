@@ -185,3 +185,55 @@ class DocumentRepository:
         stmt = select(Document).where(Document.status == "pending")
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    # ------------------------------------------------------------------
+    # Filename-based search
+    # ------------------------------------------------------------------
+
+    async def search_chunks_by_filename(
+        self,
+        user_id: int,
+        filename_pattern: str,
+        max_chunks: int = 10,
+    ) -> list[dict]:
+        """
+        Find document chunks for documents whose filename matches the
+        given pattern (case-insensitive substring match).
+
+        Returns list of dicts with keys: id, document_id, chunk_index,
+        chunk_text, filename
+        """
+        stmt = text("""
+            SELECT dc.id, dc.document_id, dc.chunk_index, dc.chunk_text,
+                   d.filename
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE dc.user_id = :user_id
+              AND d.status = 'completed'
+              AND LOWER(d.filename) LIKE LOWER(:pattern)
+            ORDER BY dc.chunk_index
+            LIMIT :max_chunks
+        """)
+
+        result = await self.session.execute(
+            stmt,
+            {
+                "user_id": user_id,
+                "pattern": f"%{filename_pattern}%",
+                "max_chunks": max_chunks,
+            },
+        )
+
+        rows = result.fetchall()
+        return [
+            {
+                "id": row.id,
+                "document_id": row.document_id,
+                "chunk_index": row.chunk_index,
+                "chunk_text": row.chunk_text,
+                "filename": row.filename,
+                "distance": 0.0,  # exact filename match = best relevance
+            }
+            for row in rows
+        ]
+

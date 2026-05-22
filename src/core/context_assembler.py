@@ -246,25 +246,93 @@ class ContextAssembler:
         session: AsyncSession,
         user_id: int,
         query_text: str,
-        top_k: int = 3,
+        top_k: int = 5,
     ) -> list[dict]:
-        """Retrieve relevant document chunks via vector similarity search."""
-        if not self.episodic.embedding_service.available:
+        """Retrieve relevant document chunks via vector similarity search,
+        with a filename-based fallback for queries that reference documents
+        by name."""
+        doc_repo = DocumentRepository(session)
+        results: list[dict] = []
+
+        # 1. Vector similarity search (if embeddings available)
+        if self.episodic.embedding_service.available:
+            try:
+                query_embedding = await self.episodic.embedding_service.embed(query_text)
+                vector_results = await doc_repo.search_chunks_by_similarity(
+                    user_id=user_id,
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                )
+                # Relaxed threshold: cosine distance range is 0–2, allow up to 1.2
+                results = [r for r in vector_results if r["distance"] < 1.2]
+            except Exception:
+                logger.exception("Document chunk vector retrieval failed")
+
+        # 2. Filename-based fallback: extract potential document name
+        #    references from the query and search by filename.
+        filename_results = await self._search_by_filename_hints(
+            doc_repo, user_id, query_text
+        )
+        if filename_results:
+            # Deduplicate: don't add chunks already found by vector search
+            existing_ids = {r["id"] for r in results}
+            for fr in filename_results:
+                if fr["id"] not in existing_ids:
+                    results.append(fr)
+
+        return results
+
+    async def _search_by_filename_hints(
+        self,
+        doc_repo: DocumentRepository,
+        user_id: int,
+        query_text: str,
+    ) -> list[dict]:
+        """Extract potential document name references from the query and
+        search by filename.  Looks for patterns like dates, underscores,
+        and filename-like tokens."""
+        import re
+
+        hints: list[str] = []
+
+        # Match date-like patterns: 22_05, 22.05, 2026, etc.
+        date_patterns = re.findall(r'\d{1,4}[_.\-/]\d{1,4}(?:[_.\-/]\d{2,4})?', query_text)
+        hints.extend(date_patterns)
+
+        # Match tokens with underscores (likely filenames)
+        underscore_tokens = re.findall(r'\b\w+(?:_\w+)+\b', query_text)
+        hints.extend(underscore_tokens)
+
+        # Match quoted strings
+        quoted = re.findall(r'["\']([^"\']+)["\']', query_text)
+        hints.extend(quoted)
+
+        # Match tokens with file extensions
+        ext_tokens = re.findall(r'\b\w+\.(?:pdf|docx|doc|txt|md)\b', query_text, re.IGNORECASE)
+        hints.extend(ext_tokens)
+
+        if not hints:
             return []
 
-        try:
-            query_embedding = await self.episodic.embedding_service.embed(query_text)
-            doc_repo = DocumentRepository(session)
-            results = await doc_repo.search_chunks_by_similarity(
-                user_id=user_id,
-                query_embedding=query_embedding,
-                top_k=top_k,
-            )
-            # Filter out low-relevance results (distance > 0.8 means not very similar)
-            return [r for r in results if r["distance"] < 0.8]
-        except Exception:
-            logger.exception("Document chunk retrieval failed")
-            return []
+        # Search for each hint and collect unique results
+        all_results: list[dict] = []
+        seen_ids: set[int] = set()
+
+        for hint in hints:
+            try:
+                matches = await doc_repo.search_chunks_by_filename(
+                    user_id=user_id,
+                    filename_pattern=hint,
+                    max_chunks=5,
+                )
+                for m in matches:
+                    if m["id"] not in seen_ids:
+                        all_results.append(m)
+                        seen_ids.add(m["id"])
+            except Exception:
+                logger.exception("Filename search failed for hint '%s'", hint)
+
+        return all_results
 
     # ------------------------------------------------------------------
     # Budget helpers

@@ -45,7 +45,7 @@ For each fact worth remembering, respond in JSON format:
 {{
   "facts": [
     {{
-      "content": "concise fact statement (include the source document name)",
+      "content": "fact statement using the document's original wording (include the source document name)",
       "tags": ["tag1", "tag2"],
       "relevance_score": 0.8
     }}
@@ -54,6 +54,14 @@ For each fact worth remembering, respond in JSON format:
 
 If nothing in these excerpts is worth remembering as standalone facts, respond with:
 {{"facts": []}}
+
+CRITICAL RULES — you MUST follow these:
+1. PRESERVE the document's original wording exactly. Do NOT rephrase, summarize, or reword the content.
+2. If the document contains a list, store EACH item as a SEPARATE fact. Do NOT merge or combine items.
+3. NEVER fabricate, infer, or add information that is not explicitly in the document.
+4. NEVER mix information from different sections, lists, or tables.
+5. Keep the original structure, ordering, numbers, and terminology intact.
+6. Always include the source document name in each fact for traceability.
 
 IMPORTANT: Respond ONLY with valid JSON, no markdown or extra text.\
 """

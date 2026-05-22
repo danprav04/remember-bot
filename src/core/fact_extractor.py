@@ -45,7 +45,7 @@ For each fact worth remembering, respond in JSON format:
 {{
   "facts": [
     {{
-      "content": "concise fact statement",
+      "content": "fact statement using the user's original wording",
       "tags": ["tag1", "tag2"],
       "relevance_score": 0.0-1.0,
       "supersedes_fact_id": null or integer ID of an existing fact this replaces
@@ -55,6 +55,14 @@ For each fact worth remembering, respond in JSON format:
 
 If nothing in this turn is worth remembering, respond with:
 {{"facts": []}}
+
+CRITICAL RULES — you MUST follow these:
+1. PRESERVE the user's original wording exactly. Do NOT rephrase, summarize, or reword their statements.
+2. If the user provides a list, store EACH item as a SEPARATE fact. Do NOT merge or combine items.
+3. NEVER fabricate, infer, or add information the user did not explicitly state.
+4. NEVER mix information from different lists, topics, or contexts.
+5. Keep the user's original structure, ordering, and terminology intact.
+6. If the user gives specific names, numbers, or details, reproduce them exactly.
 
 IMPORTANT: Respond ONLY with valid JSON, no markdown or extra text.\
 """

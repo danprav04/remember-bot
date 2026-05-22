@@ -228,10 +228,18 @@ class Orchestrator:
         # Resolve user
         async with self._session_factory() as session:
             user_repo = UserRepository(session)
+            msg_repo = MessageRepository(session)
+
             user = await user_repo.get_or_create(
                 platform=incoming.platform,
                 platform_user_id=incoming.platform_user_id,
                 display_name=incoming.display_name,
+            )
+
+            conversation = await msg_repo.get_or_create_conversation(
+                user_id=user.id,
+                platform=incoming.platform,
+                platform_chat_id=incoming.platform_chat_id,
             )
 
             # Create document record
@@ -244,6 +252,21 @@ class Orchestrator:
                 platform=incoming.platform,
                 platform_chat_id=incoming.platform_chat_id,
             )
+
+            # Store upload event as a message in the conversation so working
+            # memory retains a trace of the upload for follow-up questions.
+            upload_text = incoming.text if incoming.text and incoming.text != f"[Document: {filename}]" else ""
+            user_msg_content = f"[User uploaded document: {filename}]"
+            if upload_text:
+                user_msg_content += f"\nCaption: {upload_text}"
+
+            await msg_repo.save_message(
+                conversation_id=conversation.id,
+                user_id=user.id,
+                role="user",
+                content=user_msg_content,
+            )
+
             await session.commit()
             document_id = doc.id
 
@@ -254,13 +277,32 @@ class Orchestrator:
             f"{file_size / 1024:.1f} KB" if file_size < 1024 * 1024
             else f"{file_size / 1024 / 1024:.1f} MB"
         )
-        return (
+        response_text = (
             f"📄 Got your file **{filename}** ({size_str})!\n\n"
             f"Processing it in the background — I'll extract the text, "
             f"embed it into my memory, and learn key facts from it.\n\n"
             f"⏳ I'll notify you when processing is complete. "
             f"In the meantime, feel free to keep chatting!"
         )
+
+        # Store the bot's acknowledgment as well so both sides appear
+        # in working memory.
+        async with self._session_factory() as session:
+            msg_repo = MessageRepository(session)
+            conversation = await msg_repo.get_or_create_conversation(
+                user_id=user.id,
+                platform=incoming.platform,
+                platform_chat_id=incoming.platform_chat_id,
+            )
+            await msg_repo.save_message(
+                conversation_id=conversation.id,
+                user_id=user.id,
+                role="assistant",
+                content=response_text,
+            )
+            await session.commit()
+
+        return response_text
 
     async def _handle_media_message(
         self,
